@@ -30,11 +30,15 @@ options.add_argument(f"--user-data-dir={profile_dir}")
 service = ChromeService(executable_path="/usr/bin/chromedriver")
 
 driver = webdriver.Chrome(service=service, options=options)
-wait = WebDriverWait(driver, 30)
+wait = WebDriverWait(driver, 20)
 
 try:
     # 1) Открываем сайт
     driver.get("https://price.domclick.ru/")
+    print("CURRENT URL:", driver.current_url)
+    html = driver.page_source
+    print("PAGE SOURCE SNIPPET:", html[:500])  # первые 500 символов
+
     wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
     # 2) Заполняем адрес
