@@ -15,8 +15,10 @@ AREA_SQM = "54"       # площадь в м²
 #  Настройки и инициализация
 # —————————————————————————
 options = uc.ChromeOptions()
-# options.add_argument("--headless")  # раскомментируйте, если нужен безголовый режим
+options.add_argument("--headless")  # раскомментируйте, если нужен безголовый режим
 options.add_argument("--disable-blink-features=AutomationControlled")
+# Указываем строковый путь до Chromium
+options.binary_location = "/usr/bin/chromium-browser"
 
 driver = uc.Chrome(options=options)
 wait = WebDriverWait(driver, 20)
