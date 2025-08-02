@@ -1,6 +1,6 @@
 import time
-import shutil
 import tempfile
+import shutil
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
@@ -9,18 +9,24 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# Параметры
+# Параметры для оценки
 ADDRESS    = "ул Малышева, 3к2"
 ROOMS_ITEM = 3      # 0=Студия,1=1-комн,2=2-комн,3=3-комн
 AREA_SQM   = "54"
 
-# Настройка опций
+# 1) Создаём временный каталог для user-data-dir
+profile_dir = tempfile.mkdtemp(prefix="chrome-profile-")
+
+# 2) Опции Chrome
 options = webdriver.ChromeOptions()
 options.add_argument("--headless=new")
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--disable-blink-features=AutomationControlled")
 options.add_argument("--window-size=1920,1080")
+options.add_argument(f"--user-data-dir={profile_dir}")
 
-# Если chromedriver не в PATH, укажите полный путь:
+# 3) Сервис с путём до chromedriver
 service = ChromeService(executable_path="/usr/bin/chromedriver")
 
 driver = webdriver.Chrome(service=service, options=options)
@@ -31,7 +37,7 @@ try:
     driver.get("https://price.domclick.ru/")
     wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
-    # 2) Адрес
+    # 2) Заполняем адрес
     addr = wait.until(EC.visibility_of_element_located((By.ID, "full_address_input")))
     addr.clear()
     addr.send_keys(ADDRESS)
@@ -39,7 +45,7 @@ try:
     addr.send_keys(Keys.ARROW_DOWN)
     addr.send_keys(Keys.ENTER)
 
-    # 3) Комнаты
+    # 3) Раскрываем выбор комнат
     rooms = wait.until(EC.visibility_of_element_located(
         (By.XPATH, '//div[@data-e2e-id="appraisal-rooms_input"]')))
     driver.execute_script("arguments[0].click()", rooms)
@@ -48,31 +54,33 @@ try:
         (By.CSS_SELECTOR, f'[data-e2e-id="appraisal-rooms_item_{ROOMS_ITEM}"]')))
     driver.execute_script("arguments[0].click()", opt)
 
-    # 4) Площадь (React-controlled)
+    # 4) Ставим площадь (React-controlled)
     area_el = wait.until(EC.visibility_of_element_located(
         (By.XPATH, '//div[@data-e2e-id="appraisal-area"]//input')))
     driver.execute_script("""
-        const el = arguments[0], val = arguments[1];
-        const d = Object.getOwnPropertyDescriptor(el, 'value');
-        const p = Object.getPrototypeOf(el);
-        const s = d?.set, ps = Object.getOwnPropertyDescriptor(p, 'value')?.set;
-        if (s && ps && s!==ps) ps.call(el,val);
-        else if (s) s.call(el,val);
+        const el=arguments[0], v=arguments[1];
+        const d=Object.getOwnPropertyDescriptor(el,'value'),
+              p=Object.getPrototypeOf(el),
+              s=d?.set,
+              ps=Object.getOwnPropertyDescriptor(p,'value')?.set;
+        if(s&&ps&&s!==ps) ps.call(el,v); else if(s) s.call(el,v);
         el.dispatchEvent(new Event('input',{bubbles:true}));
         el.dispatchEvent(new Event('change',{bubbles:true}));
     """, area_el, AREA_SQM)
     time.sleep(0.2)
 
     # 5) Сабмит
-    btn = wait.until(EC.element_to_be_clickable(
+    submit_btn = wait.until(EC.element_to_be_clickable(
         (By.XPATH, '//button[@data-e2e-id="appraisal-submit"]')))
-    driver.execute_script("arguments[0].click()", btn)
+    driver.execute_script("arguments[0].click()", submit_btn)
 
-    # 6) Результат
+    # 6) Ждём результат
     wait.until(EC.visibility_of_element_located((By.XPATH, '//h2[text()="Результат оценки"]')))
-    price = wait.until(EC.visibility_of_element_located(
+    price_elem = wait.until(EC.visibility_of_element_located(
         (By.CSS_SELECTOR, 'div.WR8hRawFuZ.DUx5fOdLmA p.O42sTBiVLr')))
-    print("Рыночная цена квартиры:", price.text)
+    print("Рыночная цена квартиры:", price_elem.text)
 
 finally:
     driver.quit()
+    # 7) Удаляем временный профиль
+    shutil.rmtree(profile_dir, ignore_errors=True)
