@@ -33,6 +33,16 @@ def format_price(raw):
     return f"{int(round(raw)):,}".replace(',', ' ')
 
 
+def truncate_lifts(val: str) -> str:
+    """
+    Берёт до двух элементов списка лифтов, обрезает первые 3 символа каждого
+    и возвращает строку, объединённую через запятую.
+    """
+    parts = [part.strip() for part in re.split(r"[,;]", val) if part.strip()]
+    truncated = [part[:3] for part in parts[:2]]
+    return ', '.join(truncated)
+
+
 def parse_listing(url: str, session: requests.Session) -> dict:
     """
     Парсит страницу объявления по URL и возвращает словарь с данными.
@@ -78,7 +88,11 @@ def parse_listing(url: str, session: requests.Session) -> dict:
                 continue
             key = ps[0].get_text(strip=True)
             val = ps[1].get_text(strip=True)
-            if key:
+            if key == 'Санузел':
+                data[key] = val
+            elif key.lower() == 'количество лифтов':
+                data[key] = truncate_lifts(val)
+            else:
                 data[key] = extract_number(val) if re.search(r"\d", val) else val
 
     # Factoids
@@ -86,10 +100,15 @@ def parse_listing(url: str, session: requests.Session) -> dict:
     if cont:
         lines = cont.get_text(separator='\n', strip=True).split('\n')
         for i in range(0, len(lines)-1, 2):
-            key, val = lines[i].strip(), lines[i+1].strip()
-            if key:
+            key = lines[i].strip()
+            val = lines[i+1].strip()
+            if not key:
+                continue
+            if key.lower() == 'количество лифтов':
+                data[key] = truncate_lifts(val)
+            else:
                 data[key] = val
-
+    
     # Просмотры
     stats_pattern = re.compile(
         r"([\d\s]+)\sпросмотр\S*,\s*(\d+)\sза сегодня,\s*(\d+)\sуникаль\S*",
@@ -144,11 +163,11 @@ def export_listings_to_excel(
         df = df.sort_values(by='Цена_raw', ascending=True)
         df.drop(columns=['Цена_raw'], inplace=True)
 
-    # Порядок колонок
-    base = ['URL', 'Комнат', 'Цена', 'Всего просмотров', 'Просмотров сегодня', 'Уникальных просмотров']
-    others = [c for c in df.columns if c not in base + ['Метки', 'Статус', 'Адрес']]
-    cols = [c for c in base + others + ['Метки', 'Статус', 'Адрес'] if c in df.columns]
-    df = df[cols]
+    # Порядок колонок: этаж после уникальных просмотров, тип жилья перед метками, URL в конец
+    base = ['Комнат', 'Цена', 'Всего просмотров', 'Просмотров сегодня', 'Уникальных просмотров', 'Этаж']
+    others = [c for c in df.columns if c not in base + ['Тип жилья', 'Метки', 'Статус', 'Адрес', 'URL']]
+    cols = base + others + ['Тип жилья', 'Метки', 'Статус', 'Адрес', 'URL']
+    df = df[[c for c in cols if c in df.columns]]
 
     # Запись в память
     bio = BytesIO()
@@ -159,7 +178,6 @@ def export_listings_to_excel(
     if output_path:
         with open(output_path, 'wb') as f:
             f.write(bio.getbuffer())
-        # Дополнительное форматирование ячеек
         write_styled_excel_file(output_path)
 
     return bio
