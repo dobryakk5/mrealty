@@ -34,29 +34,20 @@ def format_price(raw):
 
 
 def truncate_lifts(val: str) -> str:
-    """
-    Берёт до двух элементов списка лифтов, обрезает первые 3 символа каждого
-    и возвращает строку, объединённую через запятую.
-    """
     parts = [part.strip() for part in re.split(r"[,;]", val) if part.strip()]
     truncated = [part[:3] for part in parts[:2]]
     return ', '.join(truncated)
 
 
 def parse_listing(url: str, session: requests.Session) -> dict:
-    """
-    Парсит страницу объявления по URL и возвращает словарь с данными.
-    """
     resp = session.get(url, headers=HEADERS)
     resp.encoding = 'utf-8'
     soup = BeautifulSoup(resp.text, 'html.parser')
     data = {'URL': url}
 
-    # Статус
     status_text = soup.find(string=re.compile(r"Объявление снято с публикации", re.IGNORECASE))
     data['Статус'] = 'Снято' if status_text else 'Активно'
 
-    # Метки
     labels = []
     for child in soup.select('div[data-name="LabelsLayoutNew"] > span'):
         spans = child.find_all('span')
@@ -66,20 +57,17 @@ def parse_listing(url: str, session: requests.Session) -> dict:
                 labels.append(lbl)
     data['Метки'] = '; '.join(labels) if labels else None
 
-    # Комнат
     h1 = soup.find('h1')
     if h1:
         m = re.search(r"(\d+)[^\d]*[-–]?комн", h1.get_text())
         data['Комнат'] = extract_number(m.group(1)) if m else None
 
-    # Цена
     price_el = (
         soup.select_one('div[data-name="NewbuildingPriceInfo"] [data-testid="price-amount"] span')
         or soup.select_one('div[data-name="AsideGroup"] div[data-name="PriceInfo"] [data-testid="price-amount"] span')
     )
     data['Цена_raw'] = extract_number(price_el.get_text() if price_el else None)
 
-    # Summary info
     summary = soup.select_one('[data-name="OfferSummaryInfoLayout"]')
     if summary:
         for item in summary.select('[data-name="OfferSummaryInfoItem"]'):
@@ -95,7 +83,6 @@ def parse_listing(url: str, session: requests.Session) -> dict:
             else:
                 data[key] = extract_number(val) if re.search(r"\d", val) else val
 
-    # Factoids
     cont = soup.find('div', {'data-name': 'ObjectFactoids'})
     if cont:
         lines = cont.get_text(separator='\n', strip=True).split('\n')
@@ -109,7 +96,6 @@ def parse_listing(url: str, session: requests.Session) -> dict:
             else:
                 data[key] = val
     
-    # Просмотры
     stats_pattern = re.compile(
         r"([\d\s]+)\sпросмотр\S*,\s*(\d+)\sза сегодня,\s*(\d+)\sуникаль\S*",
         re.IGNORECASE
@@ -121,9 +107,8 @@ def parse_listing(url: str, session: requests.Session) -> dict:
         data['Просмотров сегодня'] = extract_number(m.group(2))
         data['Уникальных просмотров'] = extract_number(m.group(3))
 
-    # Адрес
-    address = None
     geo_div = soup.select_one('div[data-name="Geo"]')
+    address = None
     if geo_div:
         addr_span = geo_div.find('span', attrs={'itemprop': 'name'})
         if addr_span and addr_span.get('content'):
@@ -131,24 +116,16 @@ def parse_listing(url: str, session: requests.Session) -> dict:
         else:
             parts = [a.get_text(strip=True) for a in geo_div.select('a[data-name="AddressItem"]')]
             address = ', '.join(parts) if parts else None
-        if address and address.startswith('Москва,'):
-            address = address.split(',', 1)[1].strip()
+        # Оставляем только последние два сегмента адреса
+        if address:
+            segs = [seg.strip() for seg in address.split(',') if seg.strip()]
+            address = ', '.join(segs[-2:]) if len(segs) > 1 else address
     data['Адрес'] = address
 
     return data
 
 
-def export_listings_to_excel(
-    listing_urls: list,
-    output_path: str = None
-) -> BytesIO:
-    """
-    Принимает список URL объявлений, собирает данные и возвращает Excel-файл в памяти.
-
-    :param listing_urls: список ссылок на объявления
-    :param output_path: если указан, сохраняет файл по этому пути
-    :return: BytesIO с Excel-файлом
-    """
+def export_listings_to_excel(listing_urls: list, output_path: str = None) -> BytesIO:
     sess = requests.Session()
     rows = []
     for url in listing_urls:
@@ -163,18 +140,15 @@ def export_listings_to_excel(
         df = df.sort_values(by='Цена_raw', ascending=True)
         df.drop(columns=['Цена_raw'], inplace=True)
 
-    # Порядок колонок: этаж после уникальных просмотров, тип жилья перед метками, URL в конец
     base = ['Комнат', 'Цена', 'Всего просмотров', 'Просмотров сегодня', 'Уникальных просмотров', 'Этаж']
     others = [c for c in df.columns if c not in base + ['Тип жилья', 'Метки', 'Статус', 'Адрес', 'URL']]
     cols = base + others + ['Тип жилья', 'Метки', 'Статус', 'Адрес', 'URL']
     df = df[[c for c in cols if c in df.columns]]
 
-    # Запись в память
     bio = BytesIO()
     df.to_excel(bio, index=False)
     bio.seek(0)
 
-    # Стилизация, если сохраняем
     if output_path:
         with open(output_path, 'wb') as f:
             f.write(bio.getbuffer())
@@ -184,20 +158,15 @@ def export_listings_to_excel(
 
 
 def write_styled_excel_file(filename: str):
-    """
-    Применяет стили к существующему Excel-файлу.
-    """
     wb = load_workbook(filename)
     ws = wb.active
 
     gray = Font(color="808080")
     bold = Font(bold=True)
 
-    # Заголовки
     for cell in ws[1]:
         cell.font = bold
 
-    # Серые строки для снятых
     status_col = get_column_letter(ws.max_column)
     for row in range(2, ws.max_row+1):
         if ws[f"{status_col}{row}"].value == 'Снято':
@@ -205,3 +174,20 @@ def write_styled_excel_file(filename: str):
                 ws[f"{get_column_letter(col)}{row}"].font = gray
 
     wb.save(filename)
+
+
+def extract_urls(raw: str) -> tuple[list[str], int]:
+    """Находит все вхождения ссылок, начинающихся с http или https, и возвращает их список и количество."""
+    # Ищем подстроки, начинающиеся с http:// или https:// до пробела или разделителя
+    urls = re.findall(r'https?://[^\s,;]+' , raw)
+    return urls, len(urls)
+
+if __name__ == '__main__':
+    raw_input = input('Введите строки с URL-адресами (одно или несколько), возможно с любыми разделителями и текстом: ')
+    listing_urls, count = extract_urls(raw_input)
+    print(f"Принято ссылок: {count}")
+    if listing_urls:
+        excel = export_listings_to_excel(listing_urls)
+        with open('listings.xlsx', 'wb') as f:
+            f.write(excel.getbuffer())
+        print('Файл listings.xlsx успешно создан.')
