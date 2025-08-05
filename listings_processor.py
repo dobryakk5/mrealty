@@ -21,14 +21,14 @@ HEADERS = {
     'Accept-Language': 'ru-RU,ru;q=0.9',
 }
 
-
 def extract_number(text: str):
     if not text or text == '—':
         return None
     cleaned = re.sub(r"[^\d.,]", "", text)
     cleaned = cleaned.replace('\u00A0', '').replace(' ', '').replace(',', '.')
     try:
-        return float(cleaned) if '.' in cleaned else int(cleaned)
+        num = float(cleaned) if '.' in cleaned else int(cleaned)
+        return int(num)
     except ValueError:
         return None
 
@@ -50,7 +50,7 @@ def parse_listing(url: str, session: requests.Session) -> dict:
     # Метки
     labels = [span.get_text(strip=True) for span in soup.select('div[data-name="LabelsLayoutNew"] > span span:last-of-type')]
     data['Метки'] = '; '.join(labels) if labels else None
-    # Комнатность из заголовка
+    # Комнатность
     h1 = soup.find('h1')
     if h1:
         m = re.search(r"(\d+)[^\d]*[-–]?комн", h1.get_text())
@@ -64,7 +64,7 @@ def parse_listing(url: str, session: requests.Session) -> dict:
     if price_el:
         data['Цена_raw'] = extract_number(price_el.get_text())
 
-    # Обработка основных фактов в сводном блоке
+    # Сводный блок
     summary = soup.select_one('[data-name="OfferSummaryInfoLayout"]')
     if summary:
         for item in summary.select('[data-name="OfferSummaryInfoItem"]'):
@@ -74,22 +74,18 @@ def parse_listing(url: str, session: requests.Session) -> dict:
             key = ps[0].get_text(strip=True)
             val = ps[1].get_text(strip=True)
             kl = key.lower().strip()
-            # Этаж
             if kl == 'этаж':
                 data['Этаж'] = val
-                print(f"DEBUG Этаж (сводка): '{val}'")
                 continue
-            # Текстовые поля, сохраняем как есть
             if kl in ['санузел', 'балкон/лоджия', 'количество лифтов']:
                 data[key] = val
                 continue
-            # Остальные числовые или текстовые поля
             if re.search(r"\d", val):
                 data[key] = extract_number(val) or val
             else:
                 data[key] = val
 
-    # Дополнительные факты в блоке ObjectFactoids
+    # ObjectFactoids
     cont = soup.find('div', {'data-name': 'ObjectFactoids'})
     if cont:
         lines = cont.get_text(separator='\n', strip=True).split('\n')
@@ -99,7 +95,6 @@ def parse_listing(url: str, session: requests.Session) -> dict:
             kl = key.lower().strip()
             if kl == 'этаж' and 'Этаж' not in data:
                 data['Этаж'] = val
-                print(f"DEBUG Этаж (ObjectFactoids): '{val}'")
             elif kl in ['санузел', 'балкон/лоджия', 'количество лифтов']:
                 data[key] = val
             else:
@@ -108,7 +103,7 @@ def parse_listing(url: str, session: requests.Session) -> dict:
                 else:
                     data[key] = val
 
-    # Статистика просмотров
+    # Просмотры
     stats_re = re.compile(r"([\d\s]+)\sпросмотр\S*,\s*(\d+)\sза сегодня,\s*(\d+)\sуникаль", re.IGNORECASE)
     st = soup.find(string=stats_re)
     if st:
@@ -117,9 +112,10 @@ def parse_listing(url: str, session: requests.Session) -> dict:
         data['Просмотров сегодня'] = extract_number(m.group(2))
         data['Уникальных просмотров'] = extract_number(m.group(3))
 
-    # Адрес
+    # Адрес и ближайшее метро
     geo = soup.select_one('div[data-name="Geo"]')
     if geo:
+        # Адрес
         span = geo.find('span', itemprop='name')
         if span and span.get('content'):
             addr = span['content']
@@ -127,6 +123,22 @@ def parse_listing(url: str, session: requests.Session) -> dict:
             addr = ', '.join(a.get_text(strip=True) for a in geo.select('a[data-name="AddressItem"]'))
         parts = [s.strip() for s in addr.split(',') if s.strip()]
         data['Адрес'] = ', '.join(parts[-2:]) if len(parts) > 1 else addr
+
+        # Выбор ближайшей станции метро
+        stations = []
+        for li in geo.select('ul[data-name="UndergroundList"] li[data-name="UndergroundItem"]'):
+            st_el = li.find('a', href=True)
+            tm_el = li.find('span', class_=re.compile(r".*underground_time.*"))
+            if st_el and tm_el:
+                name = st_el.get_text(strip=True)
+                minutes = extract_number(tm_el.get_text())
+                stations.append((name, minutes))
+        if stations:
+            # находим минимальное время
+            min_station, min_time = min(stations, key=lambda x: x[1] if x[1] is not None else float('inf'))
+            # сохраняем в формате '<минут> <станция>'
+            data['Минут метро'] = f"{min_time} {min_station}"
+            print(f"DEBUG Минут метро: {data['Минут метро']}")
 
     return data
 
@@ -139,24 +151,26 @@ async def export_listings_to_excel(listing_urls: list[str], output_path: str = N
         except Exception as e:
             print(f"Ошибка при парсинге {url}: {e}")
 
-    # Сохраняем в БД
     await save_listings(rows)
 
     df = pd.DataFrame(rows)
     print("DEBUG COLUMNS:", df.columns.tolist())
 
+    # Форматирование цены
     if 'Цена_raw' in df.columns:
         df['Цена'] = df['Цена_raw'].apply(format_price)
         df = df.sort_values('Цена_raw')
         df.drop('Цена_raw', axis=1, inplace=True)
 
+    # Порядок столбцов
     ordered = [
-        'Комнат', 'Тип жилья', 'Общая площадь', 'Жилая площадь', 'Площадь кухни',
-        'Санузел', 'Балкон/лоджия', 'Вид из окон', 'Ремонт', 'Этаж', 'Год постройки',
-        'Строительная серия', 'Тип дома', 'Тип перекрытий', 'Количество лифтов', 'Парковка',
+        'Комнат', 'Тип жилья', 'Общая площадь', 'Жилая площадь',
+        'Площадь кухни', 'Санузел', 'Балкон/лоджия', 'Вид из окон',
+        'Ремонт', 'Этаж', 'Год постройки', 'Строительная серия',
+        'Тип дома', 'Тип перекрытий', 'Количество лифтов', 'Парковка',
         'Подъезды', 'Отопление', 'Аварийность', 'Газоснабжение',
         'Всего просмотров', 'Просмотров сегодня', 'Уникальных просмотров',
-        'Адрес', 'Метки', 'Статус', 'URL'
+        'Адрес', 'Минут метро', 'Метки', 'Статус', 'URL'
     ]
     df = df[[c for c in ordered if c in df.columns]]
 
@@ -171,7 +185,7 @@ async def export_listings_to_excel(listing_urls: list[str], output_path: str = N
 
     return bio
 
-# Остальные вспомогательные функции без изменений
+# Запись стилей
 
 def write_styled_excel_file(filename: str):
     wb = load_workbook(filename)
@@ -187,6 +201,7 @@ def write_styled_excel_file(filename: str):
                 ws[f"{get_column_letter(col)}{row}"].font = gray
     wb.save(filename)
 
+# Извлечение URL
 
 def extract_urls(raw_input: str) -> tuple[list[str], int]:
     urls = re.findall(r'https?://[^\s,;]+', raw_input)

@@ -22,7 +22,7 @@ async def _get_pool() -> asyncpg.Pool:
     return _db_pool
 
 async def init_listings_table(conn: asyncpg.Connection) -> None:
-    # Creates the listings table without text fields for bathroom, balcony, lifts
+    # Creates the listings table with parsed bathroom, balcony, lifts, and metro fields
     await conn.execute("""
     CREATE SCHEMA IF NOT EXISTS users;
     CREATE TABLE IF NOT EXISTS users.listings (
@@ -60,6 +60,8 @@ async def init_listings_table(conn: asyncpg.Connection) -> None:
         parking TEXT,
         lifts_num INTEGER,
         lifts_type TEXT,
+        min_metro INTEGER,
+        metro TEXT,
         housing_type TEXT,
         address TEXT,
         ts TIMESTAMP NOT NULL,
@@ -105,7 +107,7 @@ def parse_floor(text: any) -> tuple[int | None, int | None]:
 def parse_count_type(text: any) -> tuple[int | None, str | None]:
     if not text:
         return None, None
-    s = str(text).strip().lower()
+    s = str(text).strip()
     m = re.match(r"(\d+)\s*(.*)", s)
     if m:
         num = int(m.group(1))
@@ -131,7 +133,7 @@ async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
     floor_raw = listing.get('Этаж')
     floor_num, floors = parse_floor(floor_raw)
 
-    # Bathroom, balcony, lifts
+    # Count/type fields
     bathroom_raw = listing.get('Санузел')
     bathroom_num, bathroom_type = parse_count_type(bathroom_raw)
 
@@ -140,6 +142,9 @@ async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
 
     lifts_raw = listing.get('Количество лифтов')
     lifts_num, lifts_type = parse_count_type(lifts_raw)
+
+    metro_raw = listing.get('Минут метро')
+    min_metro, metro = parse_count_type(metro_raw)
 
     # String fields
     url = to_str(listing.get('URL'))
@@ -158,14 +163,14 @@ async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
     housing_type = to_str(listing.get('Тип жилья'))
     address = to_str(listing.get('Адрес'))
 
-    # Boolean & year & ints
+    # Boolean, year, ints
     furnished_binary = listing.get('Продаётся с мебелью') == 'Да'
     year_dec = clean_numeric(listing.get('Год постройки'))
     year_built = int(year_dec) if year_dec is not None else None
     rooms = listing.get('Комнат') if isinstance(listing.get('Комнат'), int) else None
     entrances = listing.get('Подъезды') if isinstance(listing.get('Подъезды'), int) else None
 
-    # Other data
+    # Other JSONB
     known = {
         'URL','Статус','Метки','Комнат','Цена_raw',
         'Всего просмотров','Просмотров сегодня','Уникальных просмотров',
@@ -173,12 +178,12 @@ async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
         'Балкон/лоджия','Вид из окон','Ремонт','Продаётся с мебелью',
         'Год постройки','Строительная серия','Тип дома','Тип перекрытий',
         'Подъезды','Отопление','Аварийность','Газоснабжение','Высота потолков',
-        'Мусоропровод','Парковка','Количество лифтов','Тип жилья','Адрес'
+        'Мусоропровод','Парковка','Количество лифтов','Тип жилья','Адрес','Минут метро'
     }
     other = {k: v for k, v in listing.items() if k not in known}
     ts = datetime.now(pytz.timezone("Europe/Moscow")).replace(tzinfo=None, microsecond=0)
 
-    # Insert with 37 fields
+    # Insert with 39 fields
     await conn.execute("""
     INSERT INTO users.listings(
         url, status, labels, rooms, price,
@@ -190,7 +195,9 @@ async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
         furnished_binary, year_built, series,
         house_type, overlap_type, entrances, heating,
         emergency, gas, ceiling_height, garbage_chute,
-        parking, lifts_num, lifts_type, housing_type, address,
+        parking, lifts_num, lifts_type,
+        min_metro, metro,
+        housing_type, address,
         ts, other
     ) VALUES (
         $1, $2, $3, $4, $5,
@@ -202,8 +209,10 @@ async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
         $20, $21, $22,
         $23, $24, $25, $26,
         $27, $28, $29, $30,
-        $31, $32, $33, $34, $35,
-        $36, $37
+        $31, $32, $33,
+        $34, $35,
+        $36, $37,
+        $38, $39
     )
     """,
         url, status, labels, rooms, price,
@@ -215,7 +224,9 @@ async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
         furnished_binary, year_built, series,
         house_type, overlap_type, entrances, heating,
         emergency, gas, ceiling_height, garbage_chute,
-        parking, lifts_num, lifts_type, housing_type, address,
+        parking, lifts_num, lifts_type,
+        min_metro, metro,
+        housing_type, address,
         ts, json.dumps(other, ensure_ascii=False)
     )
 
