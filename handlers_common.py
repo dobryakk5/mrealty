@@ -29,15 +29,6 @@ dp = Dispatcher()
 # Инициализация логгера
 logger = logging.getLogger(__name__)
 
-async def show_parser_result(category: str, subcategory: str, price: str, message: Message):
-    """Показывает результат работы парсера"""
-    await message.answer(
-        f"🤖 Парсер вернул:\n"
-        f"• Категория: <b>{category}</b>\n"
-        f"• Подкатегория: <b>{subcategory}</b>\n"
-        f"• Цена: <b>{price}</b>",
-        parse_mode="HTML"
-    )
 
 async def process_user_input(
     raw_text: str, 

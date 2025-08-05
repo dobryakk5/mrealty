@@ -1,421 +1,227 @@
-# db_handler.py
-import pytz
 import os
-import asyncpg
-from asyncpg.exceptions import UniqueViolationError
+import json
+import asyncio
+import pytz
+import re
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
+import asyncpg
 from dotenv import load_dotenv
-from typing import Optional, Dict, Any
 
-# Загружаем DATABASE_URL из .env
 load_dotenv()
+DATABASE_URL = os.getenv('DATABASE_URL')
 
-# Приватный пул подключений
 _db_pool: asyncpg.Pool | None = None
 
 async def _get_pool() -> asyncpg.Pool:
-    """
-    Возвращает единый пул подключений, инициализируется при первом вызове.
-    """
     global _db_pool
     if _db_pool is None:
-        dsn = os.getenv('DATABASE_URL')
-        if not dsn:
+        if not DATABASE_URL:
             raise RuntimeError("DATABASE_URL is not set")
-        _db_pool = await asyncpg.create_pool(dsn)
+        _db_pool = await asyncpg.create_pool(DATABASE_URL)
     return _db_pool
 
-async def save_expense(
-    user_id: int,
-    chat_id: int,
-    username: str,
-    category: str,
-    subcategory: str,
-    price: float
-) -> None:
+async def init_listings_table(conn: asyncpg.Connection) -> None:
+    # Creates the listings table without text fields for bathroom, balcony, lifts
+    await conn.execute("""
+    CREATE SCHEMA IF NOT EXISTS users;
+    CREATE TABLE IF NOT EXISTS users.listings (
+        id SERIAL PRIMARY KEY,
+        url TEXT,
+        status TEXT,
+        labels TEXT,
+        rooms INTEGER,
+        price NUMERIC,
+        total_views INTEGER,
+        views_today INTEGER,
+        unique_views INTEGER,
+        floor INTEGER,
+        floors INTEGER,
+        total_area NUMERIC,
+        living_area NUMERIC,
+        kitchen_area NUMERIC,
+        bathroom_num INTEGER,
+        bathroom_type TEXT,
+        balcony_num INTEGER,
+        balcony_type TEXT,
+        view_from_windows TEXT,
+        renovation TEXT,
+        furnished_binary BOOLEAN DEFAULT FALSE,
+        year_built INTEGER,
+        series TEXT,
+        house_type TEXT,
+        overlap_type TEXT,
+        entrances INTEGER,
+        heating TEXT,
+        emergency TEXT,
+        gas TEXT,
+        ceiling_height NUMERIC,
+        garbage_chute TEXT,
+        parking TEXT,
+        lifts_num INTEGER,
+        lifts_type TEXT,
+        housing_type TEXT,
+        address TEXT,
+        ts TIMESTAMP NOT NULL,
+        other JSONB
+    );
     """
-    Добавляет пользователя, категорию, подкатегорию и новую запись в purchases.
-    Записывает поле ts как Moscow datetime.
-    """
-    pool = await _get_pool()
-    ts  = datetime.now(pytz.timezone("Europe/Moscow")).replace(tzinfo=None, microsecond=0)
+    )
 
-
-    async with pool.acquire() as conn:
-        # 1) users
-        await conn.execute("""
-            INSERT INTO users (user_id, chat_id, username)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id) DO UPDATE
-              SET chat_id = EXCLUDED.chat_id,
-                  username = EXCLUDED.username;
-        """, user_id, chat_id, username)
-
-        # 2) categories
-        await conn.execute("""
-            INSERT INTO categories (user_id, name)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id, name) DO NOTHING;
-        """, user_id, category)
-
-        # 3) получить category_id
-        row = await conn.fetchrow("""
-            SELECT id FROM categories
-            WHERE user_id = $1 AND name = $2;
-        """, user_id, category)
-        category_id = row['id']
-
-        # 4) subcategories
-        await conn.execute("""
-            INSERT INTO subcategories (user_id, category_id, name)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id, category_id, name) DO NOTHING;
-        """, user_id, category_id, subcategory)
-
-        # 5) purchases — записываем ts с датой и временем
-        await conn.execute("""
-            INSERT INTO purchases (user_id, category, subcategory, price, ts)
-            VALUES ($1, $2, $3, $4, $5);
-        """, user_id, category, subcategory, price, ts)
-
-async def save_expenses_ph(
-    user_id: int,
-    chat_id: int,
-    username: str,
-    items: list[tuple[str, str, float]]
-) -> None:
-    """
-    Сохраняет в БД список позиций чека с их категориями.
-
-    Параметры:
-        user_id (int): Telegram user_id
-        chat_id (int): Telegram chat_id
-        username (str): Telegram username
-        items (List[Tuple[category, name, price]]):
-            Каждая запись — кортеж (категория, название_товара, цена).
-    """
-    pool = await _get_pool()
-    ts = datetime.now(pytz.timezone("Europe/Moscow")).replace(tzinfo=None, microsecond=0)
-
-    async with pool.acquire() as conn:
-        # 1) Пользователь
-        await conn.execute(
-            """
-            INSERT INTO users (user_id, chat_id, username)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id) DO UPDATE
-              SET chat_id = EXCLUDED.chat_id,
-                  username = EXCLUDED.username;
-            """,
-            user_id, chat_id, username
-        )
-
-        for category, name, price in items:
-            # 2) Категория
-            await conn.execute(
-                """
-                INSERT INTO categories (user_id, name)
-                VALUES ($1, $2)
-                ON CONFLICT (user_id, name) DO NOTHING;
-                """,
-                user_id, category
-            )
-            # 3) Получаем id категории
-            row = await conn.fetchrow(
-                """
-                SELECT id FROM categories
-                WHERE user_id = $1 AND name = $2;
-                """,
-                user_id, category
-            )
-            category_id = row['id']
-
-            # 4) Подкатегория (название товара)
-            await conn.execute(
-                """
-                INSERT INTO subcategories (user_id, category_id, name)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (user_id, category_id, name) DO NOTHING;
-                """,
-                user_id, category_id, name
-            )
-
-            # 5) Покупка
-            await conn.execute(
-                """
-                INSERT INTO purchases (user_id, category, subcategory, price, ts)
-                VALUES ($1, $2, $3, $4, $5);
-                """,
-                user_id, category, name, price, ts
-            )
-
-# старая процедура ниже (убрал с использования)
-async def update_last_field(
-    user_id: int,
-    field: str,
-    value: str
-) -> bool:
-    """
-    Обновляет указанное поле (category, subcategory или price) в последней
-    записи purchases для данного user_id. При category/subcategory — синхронизирует
-    справочники и удаляет дубли. Записывает ts как текущее локальное datetime.
-    """
-    pool = await _get_pool()
-    ts = datetime.now()  # локальное дата-время
-
-    async with pool.acquire() as conn:
-        # 1) ищем последнюю запись
-        row = await conn.fetchrow("""
-            SELECT id, category, subcategory
-            FROM purchases
-            WHERE user_id = $1
-            ORDER BY ts DESC
-            LIMIT 1;
-        """, user_id)
-        if not row:
-            return False
-
-        purchase_id = row['id']
-        old_cat     = row['category']
-        old_subcat  = row['subcategory']
-
-        if field == 'category':
-            # обновляем справочник categories
-            try:
-                await conn.execute("""
-                    UPDATE categories
-                    SET name = $1
-                    WHERE user_id = $2 AND name = $3;
-                """, value, user_id, old_cat)
-            except asyncpg.exceptions.UniqueViolationError:
-                dups = await conn.fetch(
-                    "SELECT id FROM categories WHERE user_id=$1::BIGINT AND name=$2 ORDER BY id;",
-                    user_id, value
-                )
-                for dup in dups[1:]:
-                    await conn.execute("DELETE FROM categories WHERE id = $1;", dup['id'])
-
-            # обновляем purchases
-            await conn.execute("""
-                UPDATE purchases
-                SET category = $1, ts = $2
-                WHERE id = $3;
-            """, value, ts, purchase_id)
-
-        elif field == 'subcategory':
-            # находим category_id
-            cat_row = await conn.fetchrow(
-                "SELECT id FROM categories WHERE user_id=$1::BIGINT AND name=$2;",
-                user_id, old_cat
-            )
-            category_id = cat_row['id']
-
-            # обновляем справочник subcategories
-            try:
-                await conn.execute("""
-                    UPDATE subcategories
-                    SET name = $1
-                    WHERE user_id = $2 AND category_id = $3 AND name = $4;
-                """, value, user_id, category_id, old_subcat)
-            except asyncpg.exceptions.UniqueViolationError:
-                dups = await conn.fetch(
-                    "SELECT id FROM subcategories WHERE user_id=$1::BIGINT AND category_id=$2 AND name=$3 ORDER BY id;",
-                    user_id, category_id, value
-                )
-                for dup in dups[1:]:
-                    await conn.execute("DELETE FROM subcategories WHERE id = $1;", dup['id'])
-
-            # обновляем purchases
-            await conn.execute("""
-                UPDATE purchases
-                SET subcategory = $1, ts = $2
-                WHERE id = $3;
-            """, value, ts, purchase_id)
-
-        elif field == 'price':
-            price_val = float(value)  # ValueError, если не число
-            await conn.execute("""
-                UPDATE purchases
-                SET price = $1, ts = $2
-                WHERE id = $3;
-            """, price_val, ts, purchase_id)
-
-        else:
-            raise ValueError(f"Unsupported field: {field}")
-
-        return True
-
-async def get_today_purchases(user_id: int):
-    pool = await _get_pool()
-    sql = """
-        SELECT category, subcategory, price, ts
-        FROM purchases
-        WHERE user_id = $1
-          AND (ts AT TIME ZONE 'Europe/Moscow')::date = CURRENT_DATE
-        ORDER BY ts;
-    """
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(sql, user_id)
-    return rows
-
-
-async def get_user_purchases(user_id: int) -> list[asyncpg.Record]:
-    """
-    Возвращает список записей из purchases для данного user_id, вызывая хранимую процедуру PostgreSQL.
-    Каждая запись содержит поля category, subcategory, price, ts.
-    """
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM get_user_purchases($1);", user_id)
-    return rows
-
-async def get_user_categories(user_id: int) -> list[asyncpg.Record]:
-    """
-    Возвращает список категорий для заданного user_id.
-    Каждая запись содержит поля id и name.
-    """
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT id, name
-            FROM categories
-            WHERE user_id = $1
-            ORDER BY id;
-        """, user_id)
-    return rows
-
-
-# Получить доходы пользователя за последние N дней
-from datetime import timedelta
-
-async def get_user_incomes_days(user_id: int, days: int) -> list[asyncpg.Record]:
-    """
-    Возвращает записи из income за последние `days` дней для данного user_id.
-    """
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
-        since = datetime.now() - timedelta(days=days)
-        rows = await conn.fetch("""
-            SELECT source, amount, ts
-            FROM income
-            WHERE user_id = $1 AND ts >= $2
-            ORDER BY ts;
-        """, user_id, since)
-    return rows
-
-async def save_income(user_id: int, source: str, amount: float) -> None:
-    """
-    Сохраняет источник дохода и сумму для данного user_id.
-    """
-    pool = await _get_pool()
-    ts = datetime.now(pytz.timezone("Europe/Moscow")).replace(tzinfo=None, microsecond=0)
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO income (user_id, source, amount, ts)
-            VALUES ($1, $2, $3, $4);
-        """, user_id, source, amount, ts)
-
-
-async def delete_last_purchase(user_id: int) -> bool:
-
-
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
-        return await conn.fetchval(
-            "SELECT delete_last_purchase($1);",
-            user_id
-        )
-
-async def get_last_purchase(user_id: str) -> Optional[Dict[str, Any]]:
-    """Возвращает последнюю запись о покупке пользователя"""
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
-        # Конвертируем user_id в int только для передачи в запрос
+def clean_numeric(value: any) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float, Decimal)):
         try:
-            user_id_int = int(user_id)
-        except ValueError:
-            logger.error(f"Invalid user_id: {user_id}")
+            return Decimal(value)
+        except InvalidOperation:
             return None
-            
-        row = await conn.fetchrow("""
-            SELECT category, subcategory, price
-            FROM purchases
-            WHERE user_id = $1
-            ORDER BY ts DESC
-            LIMIT 1;
-        """, user_id_int)
-        return dict(row) if row else None
+    text = str(value)
+    cleaned = re.sub(r"[^0-9,\.\-]", "", text)
+    cleaned = cleaned.replace(',', '.')
+    parts = cleaned.split('.')
+    if len(parts) > 2:
+        cleaned = ''.join(parts[:-1]) + '.' + parts[-1]
+    try:
+        return Decimal(cleaned)
+    except (InvalidOperation, ValueError):
+        return None
 
-async def update_last_purchase_field(
-    user_id: str,
-    field: str,
-    value: str
-) -> bool:
-    """Обновляет поле в последней записи покупки (для цены)"""
+def to_str(value: any) -> str | None:
+    return str(value) if value is not None else None
+
+def parse_floor(text: any) -> tuple[int | None, int | None]:
+    if not text:
+        return None, None
+    s = str(text).replace('\u00A0', ' ').strip().lower()
+    m = re.search(r"(\d+)\s*(?:из|/)\s*(\d+)", s)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m2 = re.search(r"(\d+)\b", s)
+    if m2:
+        return int(m2.group(1)), None
+    return None, None
+
+def parse_count_type(text: any) -> tuple[int | None, str | None]:
+    if not text:
+        return None, None
+    s = str(text).strip().lower()
+    m = re.match(r"(\d+)\s*(.*)", s)
+    if m:
+        num = int(m.group(1))
+        dtype = m.group(2).strip() or None
+        return num, dtype
+    return None, s or None
+
+async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
+    listing = {k.replace('\u00A0', ' '): v for k, v in listing.items()}
+    await init_listings_table(conn)
+
+    # Numeric fields
+    price = clean_numeric(listing.get('Цена_raw'))
+    total_views = clean_numeric(listing.get('Всего просмотров'))
+    views_today = clean_numeric(listing.get('Просмотров сегодня'))
+    unique_views = clean_numeric(listing.get('Уникальных просмотров'))
+    total_area = clean_numeric(listing.get('Общая площадь'))
+    living_area = clean_numeric(listing.get('Жилая площадь'))
+    kitchen_area = clean_numeric(listing.get('Площадь кухни'))
+    ceiling_height = clean_numeric(listing.get('Высота потолков'))
+
+    # Floor
+    floor_raw = listing.get('Этаж')
+    floor_num, floors = parse_floor(floor_raw)
+
+    # Bathroom, balcony, lifts
+    bathroom_raw = listing.get('Санузел')
+    bathroom_num, bathroom_type = parse_count_type(bathroom_raw)
+
+    balcony_raw = listing.get('Балкон/лоджия')
+    balcony_num, balcony_type = parse_count_type(balcony_raw)
+
+    lifts_raw = listing.get('Количество лифтов')
+    lifts_num, lifts_type = parse_count_type(lifts_raw)
+
+    # String fields
+    url = to_str(listing.get('URL'))
+    status = to_str(listing.get('Статус'))
+    labels = to_str(listing.get('Метки'))
+    view_from_windows = to_str(listing.get('Вид из окон'))
+    renovation = to_str(listing.get('Ремонт'))
+    series = to_str(listing.get('Строительная серия'))
+    house_type = to_str(listing.get('Тип дома'))
+    overlap_type = to_str(listing.get('Тип перекрытий'))
+    heating = to_str(listing.get('Отопление'))
+    emergency = to_str(listing.get('Аварийность'))
+    gas = to_str(listing.get('Газоснабжение'))
+    garbage_chute = to_str(listing.get('Мусоропровод'))
+    parking = to_str(listing.get('Парковка'))
+    housing_type = to_str(listing.get('Тип жилья'))
+    address = to_str(listing.get('Адрес'))
+
+    # Boolean & year & ints
+    furnished_binary = listing.get('Продаётся с мебелью') == 'Да'
+    year_dec = clean_numeric(listing.get('Год постройки'))
+    year_built = int(year_dec) if year_dec is not None else None
+    rooms = listing.get('Комнат') if isinstance(listing.get('Комнат'), int) else None
+    entrances = listing.get('Подъезды') if isinstance(listing.get('Подъезды'), int) else None
+
+    # Other data
+    known = {
+        'URL','Статус','Метки','Комнат','Цена_raw',
+        'Всего просмотров','Просмотров сегодня','Уникальных просмотров',
+        'Этаж','Общая площадь','Жилая площадь','Площадь кухни','Санузел',
+        'Балкон/лоджия','Вид из окон','Ремонт','Продаётся с мебелью',
+        'Год постройки','Строительная серия','Тип дома','Тип перекрытий',
+        'Подъезды','Отопление','Аварийность','Газоснабжение','Высота потолков',
+        'Мусоропровод','Парковка','Количество лифтов','Тип жилья','Адрес'
+    }
+    other = {k: v for k, v in listing.items() if k not in known}
+    ts = datetime.now(pytz.timezone("Europe/Moscow")).replace(tzinfo=None, microsecond=0)
+
+    # Insert with 37 fields
+    await conn.execute("""
+    INSERT INTO users.listings(
+        url, status, labels, rooms, price,
+        total_views, views_today, unique_views,
+        floor, floors, total_area, living_area, kitchen_area,
+        bathroom_num, bathroom_type,
+        balcony_num, balcony_type,
+        view_from_windows, renovation,
+        furnished_binary, year_built, series,
+        house_type, overlap_type, entrances, heating,
+        emergency, gas, ceiling_height, garbage_chute,
+        parking, lifts_num, lifts_type, housing_type, address,
+        ts, other
+    ) VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, $8,
+        $9, $10, $11, $12, $13,
+        $14, $15,
+        $16, $17,
+        $18, $19,
+        $20, $21, $22,
+        $23, $24, $25, $26,
+        $27, $28, $29, $30,
+        $31, $32, $33, $34, $35,
+        $36, $37
+    )
+    """,
+        url, status, labels, rooms, price,
+        total_views, views_today, unique_views,
+        floor_num, floors, total_area, living_area, kitchen_area,
+        bathroom_num, bathroom_type,
+        balcony_num, balcony_type,
+        view_from_windows, renovation,
+        furnished_binary, year_built, series,
+        house_type, overlap_type, entrances, heating,
+        emergency, gas, ceiling_height, garbage_chute,
+        parking, lifts_num, lifts_type, housing_type, address,
+        ts, json.dumps(other, ensure_ascii=False)
+    )
+
+async def save_listings(listings: list[dict]) -> None:
     pool = await _get_pool()
-    ts = datetime.now()
-
     async with pool.acquire() as conn:
-        try:
-            user_id_int = int(user_id)
-        except ValueError:
-            logger.error(f"Invalid user_id: {user_id}")
-            return False
-
-        # Получаем ID последней покупки
-        purchase_id = await conn.fetchval("""
-            SELECT id
-            FROM purchases
-            WHERE user_id = $1
-            ORDER BY ts DESC
-            LIMIT 1;
-        """, user_id_int)
-        
-        if not purchase_id:
-            return False
-
-        if field == 'price':
-            try:
-                price_val = float(value)
-            except ValueError:
-                raise ValueError("Цена должна быть числом")
-                
-            await conn.execute("""
-                UPDATE purchases
-                SET price = $1, ts = $2
-                WHERE id = $3;
-            """, price_val, ts, purchase_id)
-            return True
-        
-        raise ValueError(f"Неподдерживаемое поле: {field}")
-
-async def update_dictionary(
-    user_id: str,
-    dict_type: str,
-    old_name: str,
-    new_name: str,
-    category_name: Optional[str] = None
-) -> bool:
-    """Обновляет справочник и связанные покупки"""
-    pool = await _get_pool()
-    async with pool.acquire() as conn:
-        try:
-            user_id_int = int(user_id)
-        except ValueError:
-            logger.error(f"Invalid user_id: {user_id}")
-            return False
-            
-        if dict_type == 'category':
-            return await conn.fetchval(
-                "SELECT update_category($1::bigint, $2::text, $3::text);",
-                user_id_int, old_name, new_name
-            )
-        elif dict_type == 'subcategory':
-            if not category_name:
-                raise ValueError("Для подкатегории требуется указать категорию")
-            return await conn.fetchval(
-                "SELECT update_subcategory($1::bigint, $2::text, $3::text, $4::text);",
-                user_id_int, category_name, old_name, new_name
-            )
-        else:
-            raise ValueError(f"Неподдерживаемый тип справочника: {dict_type}")
+        await init_listings_table(conn)
+        for lst in listings:
+            await save_listing(conn, lst)

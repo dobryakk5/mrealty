@@ -3,7 +3,7 @@ import logging
 from aiogram.types import Message
 # from handlers_common import process_user_input, show_parser_result
 # from parse_expense import parse_expense_t
-# from db_handler import save_expense, save_income
+# from db_handler import 
 from listings_processor import export_listings_to_excel, extract_urls
 from aiogram.types.input_file import BufferedInputFile
 
@@ -34,7 +34,7 @@ async def _handle_listings_export(urls: list, message: Message):
     if not urls:
         return await message.answer("❗️ Не найдены ссылки для экспорта листингов.")
     try:
-        bio = export_listings_to_excel(urls)
+        bio = await export_listings_to_excel(urls)
         bio.seek(0)
         tg_file = BufferedInputFile(bio.getvalue(), filename="сравнение_квартир.xlsx")
         await message.answer_document(tg_file)
