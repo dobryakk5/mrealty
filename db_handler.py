@@ -21,12 +21,34 @@ async def _get_pool() -> asyncpg.Pool:
         _db_pool = await asyncpg.create_pool(DATABASE_URL)
     return _db_pool
 
-async def init_listings_table(conn: asyncpg.Connection) -> None:
-    # Creates the listings table with parsed bathroom, balcony, lifts, and metro fields
+async def init_schema(conn: asyncpg.Connection) -> None:
     await conn.execute("""
     CREATE SCHEMA IF NOT EXISTS users;
+
+    CREATE TABLE IF NOT EXISTS users.requests (
+        id SERIAL PRIMARY KEY,
+        userid BIGINT NOT NULL,
+        ts TIMESTAMP NOT NULL
+    );
+
+    DO $$
+    BEGIN
+       IF EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'users' AND table_name = 'requests'
+           AND column_name = 'userid'
+           AND data_type != 'bigint'
+       ) THEN
+         ALTER TABLE users.requests
+         ALTER COLUMN userid TYPE BIGINT
+           USING userid::bigint;
+       END IF;
+    END
+    $$;
+
     CREATE TABLE IF NOT EXISTS users.listings (
         id SERIAL PRIMARY KEY,
+        request_id INTEGER REFERENCES users.requests(id) ON DELETE CASCADE,
         url TEXT,
         status TEXT,
         labels TEXT,
@@ -67,8 +89,7 @@ async def init_listings_table(conn: asyncpg.Connection) -> None:
         ts TIMESTAMP NOT NULL,
         other JSONB
     );
-    """
-    )
+    """)
 
 def clean_numeric(value: any) -> Decimal | None:
     if value is None:
@@ -115,11 +136,9 @@ def parse_count_type(text: any) -> tuple[int | None, str | None]:
         return num, dtype
     return None, s or None
 
-async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
+async def save_listing(conn: asyncpg.Connection, listing: dict, request_id: int) -> None:
     listing = {k.replace('\u00A0', ' '): v for k, v in listing.items()}
-    await init_listings_table(conn)
 
-    # Numeric fields
     price = clean_numeric(listing.get('Цена_raw'))
     total_views = clean_numeric(listing.get('Всего просмотров'))
     views_today = clean_numeric(listing.get('Просмотров сегодня'))
@@ -129,24 +148,12 @@ async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
     kitchen_area = clean_numeric(listing.get('Площадь кухни'))
     ceiling_height = clean_numeric(listing.get('Высота потолков'))
 
-    # Floor
-    floor_raw = listing.get('Этаж')
-    floor_num, floors = parse_floor(floor_raw)
+    floor_num, floors = parse_floor(listing.get('Этаж'))
+    bathroom_num, bathroom_type = parse_count_type(listing.get('Санузел'))
+    balcony_num, balcony_type = parse_count_type(listing.get('Балкон/лоджия'))
+    lifts_num, lifts_type = parse_count_type(listing.get('Количество лифтов'))
+    min_metro, metro = parse_count_type(listing.get('Минут метро'))
 
-    # Count/type fields
-    bathroom_raw = listing.get('Санузел')
-    bathroom_num, bathroom_type = parse_count_type(bathroom_raw)
-
-    balcony_raw = listing.get('Балкон/лоджия')
-    balcony_num, balcony_type = parse_count_type(balcony_raw)
-
-    lifts_raw = listing.get('Количество лифтов')
-    lifts_num, lifts_type = parse_count_type(lifts_raw)
-
-    metro_raw = listing.get('Минут метро')
-    min_metro, metro = parse_count_type(metro_raw)
-
-    # String fields
     url = to_str(listing.get('URL'))
     status = to_str(listing.get('Статус'))
     labels = to_str(listing.get('Метки'))
@@ -163,76 +170,65 @@ async def save_listing(conn: asyncpg.Connection, listing: dict) -> None:
     housing_type = to_str(listing.get('Тип жилья'))
     address = to_str(listing.get('Адрес'))
 
-    # Boolean, year, ints
     furnished_binary = listing.get('Продаётся с мебелью') == 'Да'
-    year_dec = clean_numeric(listing.get('Год постройки'))
-    year_built = int(year_dec) if year_dec is not None else None
+    year_built_val = clean_numeric(listing.get('Год постройки'))
+    year_built = int(year_built_val) if year_built_val is not None else None
+
     rooms = listing.get('Комнат') if isinstance(listing.get('Комнат'), int) else None
     entrances = listing.get('Подъезды') if isinstance(listing.get('Подъезды'), int) else None
 
-    # Other JSONB
-    known = {
-        'URL','Статус','Метки','Комнат','Цена_raw',
-        'Всего просмотров','Просмотров сегодня','Уникальных просмотров',
-        'Этаж','Общая площадь','Жилая площадь','Площадь кухни','Санузел',
-        'Балкон/лоджия','Вид из окон','Ремонт','Продаётся с мебелью',
-        'Год постройки','Строительная серия','Тип дома','Тип перекрытий',
-        'Подъезды','Отопление','Аварийность','Газоснабжение','Высота потолков',
-        'Мусоропровод','Парковка','Количество лифтов','Тип жилья','Адрес','Минут метро'
+    known_keys = {
+        'URL','Статус','Метки','Комнат','Цена_raw','Всего просмотров','Просмотров сегодня','Уникальных просмотров',
+        'Этаж','Общая площадь','Жилая площадь','Площадь кухни','Санузел','Балкон/лоджия','Вид из окон','Ремонт',
+        'Продаётся с мебелью','Год постройки','Строительная серия','Тип дома','Тип перекрытий','Подъезды',
+        'Отопление','Аварийность','Газоснабжение','Высота потолков','Мусоропровод','Парковка','Количество лифтов',
+        'Тип жилья','Адрес','Минут метро'
     }
-    other = {k: v for k, v in listing.items() if k not in known}
+    other = {k: v for k, v in listing.items() if k not in known_keys}
     ts = datetime.now(pytz.timezone("Europe/Moscow")).replace(tzinfo=None, microsecond=0)
 
-    # Insert with 39 fields
+    # Insert listing with correct number of columns/placeholders
     await conn.execute("""
     INSERT INTO users.listings(
-        url, status, labels, rooms, price,
-        total_views, views_today, unique_views,
-        floor, floors, total_area, living_area, kitchen_area,
-        bathroom_num, bathroom_type,
-        balcony_num, balcony_type,
-        view_from_windows, renovation,
-        furnished_binary, year_built, series,
-        house_type, overlap_type, entrances, heating,
-        emergency, gas, ceiling_height, garbage_chute,
-        parking, lifts_num, lifts_type,
-        min_metro, metro,
-        housing_type, address,
-        ts, other
+        request_id, url, status, labels, rooms, price,
+        total_views, views_today, unique_views, floor, floors,
+        total_area, living_area, kitchen_area, bathroom_num, bathroom_type,
+        balcony_num, balcony_type, view_from_windows, renovation,
+        furnished_binary, year_built, series, house_type, overlap_type,
+        entrances, heating, emergency, gas, ceiling_height,
+        garbage_chute, parking, lifts_num, lifts_type, min_metro, metro,
+        housing_type, address, ts, other
     ) VALUES (
-        $1, $2, $3, $4, $5,
-        $6, $7, $8,
-        $9, $10, $11, $12, $13,
-        $14, $15,
-        $16, $17,
-        $18, $19,
-        $20, $21, $22,
-        $23, $24, $25, $26,
-        $27, $28, $29, $30,
-        $31, $32, $33,
-        $34, $35,
-        $36, $37,
-        $38, $39
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+        $31, $32, $33, $34, $35, $36, $37, $38, $39, $40
     )
     """,
-        url, status, labels, rooms, price,
-        total_views, views_today, unique_views,
-        floor_num, floors, total_area, living_area, kitchen_area,
-        bathroom_num, bathroom_type,
-        balcony_num, balcony_type,
-        view_from_windows, renovation,
-        furnished_binary, year_built, series,
-        house_type, overlap_type, entrances, heating,
-        emergency, gas, ceiling_height, garbage_chute,
-        parking, lifts_num, lifts_type,
-        min_metro, metro,
-        housing_type, address,
-        ts, json.dumps(other, ensure_ascii=False)
+        request_id, url, status, labels, rooms, price,
+        total_views, views_today, unique_views, floor_num, floors,
+        total_area, living_area, kitchen_area, bathroom_num, bathroom_type,
+        balcony_num, balcony_type, view_from_windows, renovation,
+        furnished_binary, year_built, series, house_type, overlap_type,
+        entrances, heating, emergency, gas, ceiling_height,
+        garbage_chute, parking, lifts_num, lifts_type, min_metro, metro,
+        housing_type, address, ts, json.dumps(other, ensure_ascii=False)
     )
 
-async def save_listings(listings: list[dict]) -> None:
+async def save_listings(listings: list[dict], user_id: int) -> None:
     pool = await _get_pool()
     async with pool.acquire() as conn:
-        await init_listings_table(conn)
+        await init_schema(conn)
+        if not isinstance(user_id, int):
+            raise ValueError(f"user_id must be int, got {type(user_id).__name__}")
+        ts = datetime.now(pytz.timezone("Europe/Moscow")).replace(tzinfo=None, microsecond=0)
+        row = await conn.fetchrow(
+            "INSERT INTO users.requests(userid, ts) VALUES($1::bigint, $2) RETURNING id",
+            user_id, ts
+        )
+        request_id = row['id']
         for lst in listings:
-            await save_listing(conn, lst)
+            await save_listing(conn, lst, request_id)
+
+# Example usage:
+# asyncio.run(save_listings(list_of_dicts, 1234567890))
