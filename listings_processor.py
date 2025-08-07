@@ -1,15 +1,18 @@
-import re
+import re, json
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from openpyxl import load_workbook
-from openpyxl.styles import numbers, Font
+from openpyxl import Workbook,load_workbook
+from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from io import BytesIO
+from typing import List, Dict, Any, Tuple
 import asyncio
+from datetime import datetime
+
 
 # Асинхронное сохранение в БД
-from db_handler import save_listings
+from db_handler import save_listings, find_similar_ads_grouped
 
 # Заголовки для HTTP-запросов
 HEADERS = {
@@ -31,7 +34,14 @@ def extract_number(text: str):
     except ValueError:
         return None
 
-async def export_listings_to_excel(listing_urls: list[str], user_id: int, output_path: str = None) -> BytesIO:
+async def export_listings_to_excel(listing_urls: list[str], user_id: int, output_path: str = None) -> tuple[BytesIO, int]:
+    """
+    Парсит список объявлений, сохраняет их в БД и возвращает Excel-файл и request_id.
+    :param listing_urls: список URL объявлений
+    :param user_id: ID пользователя для сохранения в БД
+    :param output_path: опциональный путь для сохранения файла на диск
+    :return: tuple (BytesIO с данными файла, request_id)
+    """
     sess = requests.Session()
     rows = []
     for url in listing_urls:
@@ -40,16 +50,19 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
         except Exception as e:
             print(f"Ошибка при парсинге {url}: {e}")
 
-    await save_listings(rows, user_id)
+    # Сохраняем и получаем request_id
+    request_id = await save_listings(rows, user_id)
 
+    # Формируем DataFrame
     df = pd.DataFrame(rows)
 
-    # Записываем числовую цену
+    # Обработка цен
     if 'Цена_raw' in df.columns:
         df['Цена'] = df['Цена_raw']
         df = df.sort_values('Цена_raw')
         df.drop('Цена_raw', axis=1, inplace=True)
 
+    # Порядок колонок
     ordered = [
         'Комнат', 'Цена', 'Общая площадь', 'Жилая площадь',
         'Площадь кухни', 'Санузел', 'Балкон/лоджия', 'Вид из окон',
@@ -61,24 +74,25 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
     ]
     df = df[[c for c in ordered if c in df.columns]]
 
+    # Запись в BytesIO
     bio = BytesIO()
     df.to_excel(bio, index=False)
     bio.seek(0)
 
+    # Если указан путь, сохраняем файл и форматируем столбец 'Цена'
     if output_path:
         with open(output_path, 'wb') as f:
             f.write(bio.getbuffer())
 
         wb = load_workbook(output_path)
         ws = wb.active
-        # Определяем колонку 'Цена'
-        price_idx = df.columns.get_loc('Цена') + 1
-        price_col = get_column_letter(price_idx)
-
+        # Выделяем заголовки
         for cell in ws[1]:
             cell.font = Font(bold=True)
 
-        # Применяем формат с пробелом-разделителем тысяч
+        # Определяем колонку 'Цена' и задаем формат тысяч
+        price_idx = df.columns.get_loc('Цена') + 1
+        price_col = get_column_letter(price_idx)
         custom_format = '#,##0'
         for row in range(2, ws.max_row + 1):
             cell = ws[f"{price_col}{row}"]
@@ -87,8 +101,7 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
 
         wb.save(output_path)
 
-    return bio
-
+    return bio, request_id
 # Полный парсинг страницы объявления
 
 def parse_listing(url: str, session: requests.Session) -> dict:
@@ -174,6 +187,115 @@ def parse_listing(url: str, session: requests.Session) -> dict:
 def extract_urls(raw_input: str) -> tuple[list[str], int]:
     urls = re.findall(r'https?://[^\s,;]+', raw_input)
     return urls, len(urls)
+
+
+async def export_sim_ads(
+    request_id: int,
+    output_path: str = None
+) -> Tuple[BytesIO, int]:
+    """
+    Формирует Excel вида:
+      Адрес1
+      Ссылка | Цена | Комнат | Создано | Обновлено | Активно | Владелец
+      ... с "Активно" = да/нет, даты в формате DD.MM.YYYY ...
+    Автонастройка ширины колонок по содержимому
+    """
+    groups: List[Dict[str, Any]] = await find_similar_ads_grouped(request_id)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Похожие объявления"
+    bold = Font(bold=True)
+
+    # Порядок ключей и их заголовки
+    ordered_keys = ["url", "price", "rooms", "created", "updated", "is_active", "person_type"]
+    header_map = {
+        "url": "Ссылка",
+        "price": "Цена",
+        "rooms": "Комнат",
+        "created": "Создано",
+        "updated": "Обновлено",
+        "is_active": "Активно",
+        "person_type": "Владелец",
+    }
+
+    for grp in groups:
+        addr = grp.get("address", "")
+        ads_raw = grp.get("ads", [])
+
+        # — Адрес жирным
+        ws.append([addr])
+        for cell in ws[ws.max_row]:
+            cell.font = bold
+
+        # — Распарсить, если строка
+        if isinstance(ads_raw, str):
+            try:
+                ads_raw = json.loads(ads_raw)
+            except json.JSONDecodeError:
+                ads_raw = []
+
+        # — Сформировать список dict
+        ads: List[Dict[str, Any]] = []
+        for ad in ads_raw:
+            if isinstance(ad, dict):
+                ads.append(ad)
+            else:
+                try:
+                    ads.append(dict(ad))
+                except Exception:
+                    continue
+
+        if not ads:
+            ws.append([])  # разделитель
+            continue
+
+        # — Заголовки столбцов
+        headers = [header_map[k] for k in ordered_keys]
+        ws.append(headers)
+        for cell in ws[ws.max_row]:
+            cell.font = bold
+
+        # — Данные по объявлениям
+        for ad in ads:
+            row = []
+            for k in ordered_keys:
+                val = ad.get(k, "")
+                if k == "is_active":
+                    row.append("да" if val else "нет")
+                elif k in ("created", "updated") and isinstance(val, str):
+                    # приводим YYYY-MM-DDTHH:MM:SS к DD.MM.YYYY
+                    date_part = val.split('T')[0]
+                    parts = date_part.split('-')
+                    if len(parts) == 3:
+                        row.append(f"{parts[2]}.{parts[1]}.{parts[0]}")
+                    else:
+                        row.append(val)
+                else:
+                    row.append(val)
+            ws.append(row)
+
+        ws.append([])  # пустая строка между группами
+
+    # Автонастройка ширины колонок
+    for column_cells in ws.columns:
+        max_length = max(
+            len(str(cell.value)) if cell.value is not None else 0
+            for cell in column_cells
+        )
+        col_letter = get_column_letter(column_cells[0].column)
+        ws.column_dimensions[col_letter].width = max_length + 2
+
+    # Сохраняем в BytesIO
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+
+    if output_path:
+        with open(output_path, "wb") as f:
+            f.write(bio.getbuffer())
+
+    return bio, request_id
 
 if __name__ == '__main__':
     user_id = 12345

@@ -1,16 +1,19 @@
 import os
 import json
 import asyncio
-import pytz
 import re
+import pytz
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 import asyncpg
+from typing import Any, Dict, List
 from dotenv import load_dotenv
 
+# Load environment
 load_dotenv()
 DATABASE_URL = os.getenv('DATABASE_URL')
 
+# Database pool
 _db_pool: asyncpg.Pool | None = None
 
 async def _get_pool() -> asyncpg.Pool:
@@ -30,21 +33,6 @@ async def init_schema(conn: asyncpg.Connection) -> None:
         userid BIGINT NOT NULL,
         ts TIMESTAMP NOT NULL
     );
-
-    DO $$
-    BEGIN
-       IF EXISTS (
-         SELECT 1 FROM information_schema.columns
-         WHERE table_schema = 'users' AND table_name = 'requests'
-           AND column_name = 'userid'
-           AND data_type != 'bigint'
-       ) THEN
-         ALTER TABLE users.requests
-         ALTER COLUMN userid TYPE BIGINT
-           USING userid::bigint;
-       END IF;
-    END
-    $$;
 
     CREATE TABLE IF NOT EXISTS users.listings (
         id SERIAL PRIMARY KEY,
@@ -80,8 +68,8 @@ async def init_schema(conn: asyncpg.Connection) -> None:
         ceiling_height NUMERIC,
         garbage_chute TEXT,
         parking TEXT,
-        lifts_num INTEGER,
-        lifts_type TEXT,
+        lift_p INTEGER,
+        lift_g INTEGER,
         min_metro INTEGER,
         metro TEXT,
         housing_type TEXT,
@@ -100,8 +88,7 @@ def clean_numeric(value: any) -> Decimal | None:
         except InvalidOperation:
             return None
     text = str(value)
-    cleaned = re.sub(r"[^0-9,\.\-]", "", text)
-    cleaned = cleaned.replace(',', '.')
+    cleaned = re.sub(r"[^0-9,\.\-]", "", text).replace(',', '.')
     parts = cleaned.split('.')
     if len(parts) > 2:
         cleaned = ''.join(parts[:-1]) + '.' + parts[-1]
@@ -110,9 +97,7 @@ def clean_numeric(value: any) -> Decimal | None:
     except (InvalidOperation, ValueError):
         return None
 
-def to_str(value: any) -> str | None:
-    return str(value) if value is not None else None
-
+# Parse floor info
 def parse_floor(text: any) -> tuple[int | None, int | None]:
     if not text:
         return None, None
@@ -125,6 +110,7 @@ def parse_floor(text: any) -> tuple[int | None, int | None]:
         return int(m2.group(1)), None
     return None, None
 
+# Parse counts with type (e.g. bathrooms)
 def parse_count_type(text: any) -> tuple[int | None, str | None]:
     if not text:
         return None, None
@@ -136,9 +122,34 @@ def parse_count_type(text: any) -> tuple[int | None, str | None]:
         return num, dtype
     return None, s or None
 
+# Parse lifts into passenger and freight counts
+def parse_lifts(text: any) -> tuple[int | None, int | None]:
+    """
+    Parses raw lift string and returns counts.
+    Handles cases like:
+      "2 пассажирских, 1 грузовой", "2 пассажирских", "1 грузовой".
+    Strips quotes and spaces before parsing.
+    """
+    if not text:
+        return None, None
+    # Convert to string, lower case, strip surrounding quotes/spaces
+    s = str(text).strip().lower().strip("'\"")
+    # Find passenger (пассажирских) and freight (грузовых)
+    p_nums = re.findall(r"(\d+)\s*пасс\w*", s)
+    g_nums = re.findall(r"(\d+)\s*груз\w*", s)
+    lift_p = int(p_nums[0]) if p_nums else None
+    lift_g = int(g_nums[0]) if g_nums else None
+    return lift_p, lift_g
+
+# Main save_listing function
 async def save_listing(conn: asyncpg.Connection, listing: dict, request_id: int) -> None:
     listing = {k.replace('\u00A0', ' '): v for k, v in listing.items()}
 
+    # Debug raw lifts
+    raw_lifts = listing.get('Количество лифтов')
+    print(f"[DEBUG] Raw lifts: {raw_lifts!r}")
+
+    # Numeric fields
     price = clean_numeric(listing.get('Цена_raw'))
     total_views = clean_numeric(listing.get('Всего просмотров'))
     views_today = clean_numeric(listing.get('Просмотров сегодня'))
@@ -148,87 +159,132 @@ async def save_listing(conn: asyncpg.Connection, listing: dict, request_id: int)
     kitchen_area = clean_numeric(listing.get('Площадь кухни'))
     ceiling_height = clean_numeric(listing.get('Высота потолков'))
 
+    # Parse lifts correctly
+    lift_p, lift_g = parse_lifts(raw_lifts)
+
+    # Other parsed fields
     floor_num, floors = parse_floor(listing.get('Этаж'))
     bathroom_num, bathroom_type = parse_count_type(listing.get('Санузел'))
     balcony_num, balcony_type = parse_count_type(listing.get('Балкон/лоджия'))
-    lifts_num, lifts_type = parse_count_type(listing.get('Количество лифтов'))
     min_metro, metro = parse_count_type(listing.get('Минут метро'))
 
-    url = to_str(listing.get('URL'))
-    status = to_str(listing.get('Статус'))
-    labels = to_str(listing.get('Метки'))
-    view_from_windows = to_str(listing.get('Вид из окон'))
-    renovation = to_str(listing.get('Ремонт'))
-    series = to_str(listing.get('Строительная серия'))
-    house_type = to_str(listing.get('Тип дома'))
-    overlap_type = to_str(listing.get('Тип перекрытий'))
-    heating = to_str(listing.get('Отопление'))
-    emergency = to_str(listing.get('Аварийность'))
-    gas = to_str(listing.get('Газоснабжение'))
-    garbage_chute = to_str(listing.get('Мусоропровод'))
-    parking = to_str(listing.get('Парковка'))
-    housing_type = to_str(listing.get('Тип жилья'))
-    address = to_str(listing.get('Адрес'))
-
+    # Strings and boolean
+    url = listing.get('URL')
+    status = listing.get('Статус')
+    labels = listing.get('Метки')
+    view_from_windows = listing.get('Вид из окон')
+    renovation = listing.get('Ремонт')
+    series = listing.get('Строительная серия')
+    house_type = listing.get('Тип дома')
+    overlap_type = listing.get('Тип перекрытий')
+    heating = listing.get('Отопление')
+    emergency = listing.get('Аварийность')
+    gas = listing.get('Газоснабжение')
+    garbage_chute = listing.get('Мусоропровод')
+    parking = listing.get('Парковка')
+    housing_type = listing.get('Тип жилья')
+    address = listing.get('Адрес')
     furnished_binary = listing.get('Продаётся с мебелью') == 'Да'
-    year_built_val = clean_numeric(listing.get('Год постройки'))
-    year_built = int(year_built_val) if year_built_val is not None else None
 
+    # Simple integer fields
     rooms = listing.get('Комнат') if isinstance(listing.get('Комнат'), int) else None
     entrances = listing.get('Подъезды') if isinstance(listing.get('Подъезды'), int) else None
+    year_val = clean_numeric(listing.get('Год постройки'))
+    year_built = int(year_val) if year_val is not None else None
 
-    known_keys = {
-        'URL','Статус','Метки','Комнат','Цена_raw','Всего просмотров','Просмотров сегодня','Уникальных просмотров',
-        'Этаж','Общая площадь','Жилая площадь','Площадь кухни','Санузел','Балкон/лоджия','Вид из окон','Ремонт',
-        'Продаётся с мебелью','Год постройки','Строительная серия','Тип дома','Тип перекрытий','Подъезды',
-        'Отопление','Аварийность','Газоснабжение','Высота потолков','Мусоропровод','Парковка','Количество лифтов',
-        'Тип жилья','Адрес','Минут метро'
-    }
-    other = {k: v for k, v in listing.items() if k not in known_keys}
+    # Timestamp
     ts = datetime.now(pytz.timezone("Europe/Moscow")).replace(tzinfo=None, microsecond=0)
 
-    # Insert listing with correct number of columns/placeholders
-    await conn.execute("""
-    INSERT INTO users.listings(
-        request_id, url, status, labels, rooms, price,
-        total_views, views_today, unique_views, floor, floors,
-        total_area, living_area, kitchen_area, bathroom_num, bathroom_type,
-        balcony_num, balcony_type, view_from_windows, renovation,
-        furnished_binary, year_built, series, house_type, overlap_type,
-        entrances, heating, emergency, gas, ceiling_height,
-        garbage_chute, parking, lifts_num, lifts_type, min_metro, metro,
-        housing_type, address, ts, other
-    ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-        $31, $32, $33, $34, $35, $36, $37, $38, $39, $40
-    )
-    """,
+    # Other JSONB
+    known = {
+        'URL','Статус','Метки','Комнат','Цена_raw','Всего просмотров','Просмотров сегодня',
+        'Уникальных просмотров','Этаж','Общая площадь','Жилая площадь','Площадь кухни',
+        'Санузел','Балкон/лоджия','Вид из окон','Ремонт','Продаётся с мебелью','Год постройки',
+        'Строительная серия','Тип дома','Тип перекрытий','Подъезды','Отопление','Аварийность',
+        'Газоснабжение','Высота потолков','Мусоропровод','Парковка','Количество лифтов',
+        'Минут метро','Метро','Тип жилья','Адрес'
+    }
+    other = {k: v for k, v in listing.items() if k not in known}
+
+    # Execute insert
+    await conn.execute(
+        """
+INSERT INTO users.listings(
+    request_id, url, status, labels, rooms, price,
+    total_views, views_today, unique_views, floor, floors,
+    total_area, living_area, kitchen_area, bathroom_num, bathroom_type,
+    balcony_num, balcony_type, view_from_windows, renovation,
+    furnished_binary, year_built, series, house_type, overlap_type,
+    entrances, heating, emergency, gas, ceiling_height,
+    garbage_chute, parking, lift_p, lift_g,
+    min_metro, metro, housing_type, address, ts, other
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9, $10, $11,
+    $12, $13, $14, $15, $16,
+    $17, $18, $19, $20,
+    $21, $22, $23, $24, $25,
+    $26, $27, $28, $29, $30,
+    $31, $32, $33, $34, $35,
+    $36, $37, $38, $39, $40
+)
+        """,
         request_id, url, status, labels, rooms, price,
         total_views, views_today, unique_views, floor_num, floors,
         total_area, living_area, kitchen_area, bathroom_num, bathroom_type,
         balcony_num, balcony_type, view_from_windows, renovation,
         furnished_binary, year_built, series, house_type, overlap_type,
         entrances, heating, emergency, gas, ceiling_height,
-        garbage_chute, parking, lifts_num, lifts_type, min_metro, metro,
-        housing_type, address, ts, json.dumps(other, ensure_ascii=False)
+        garbage_chute, parking, lift_p, lift_g,
+        min_metro, metro, housing_type, address, ts,
+        json.dumps(other, ensure_ascii=False)
     )
 
-async def save_listings(listings: list[dict], user_id: int) -> None:
+async def save_listings(listings: List[Dict], user_id: int) -> int:
     pool = await _get_pool()
     async with pool.acquire() as conn:
         await init_schema(conn)
         if not isinstance(user_id, int):
             raise ValueError(f"user_id must be int, got {type(user_id).__name__}")
+
+        # отметка времени без микросекунд, без tzinfo
         ts = datetime.now(pytz.timezone("Europe/Moscow")).replace(tzinfo=None, microsecond=0)
+
+        # создаём запись в requests и получаем её id
         row = await conn.fetchrow(
             "INSERT INTO users.requests(userid, ts) VALUES($1::bigint, $2) RETURNING id",
             user_id, ts
         )
-        request_id = row['id']
+        request_id = row["id"]
+
+        # сохраняем каждый listing
         for lst in listings:
             await save_listing(conn, lst, request_id)
 
-# Example usage:
-# asyncio.run(save_listings(list_of_dicts, 1234567890))
+    # возвращаем request_id вызывающему
+    return request_id
+
+async def find_similar_ads_grouped(request_id: int) -> List[Dict[str, Any]]:
+    """
+    Подключается к БД так же, как в save_listings,
+    выполняет SELECT из users.find_similar_ads_grouped
+    и возвращает результат в виде списка dict.
+    """
+    # Получаем пул соединений
+    pool: asyncpg.pool.Pool = await _get_pool()
+    
+    async with pool.acquire() as conn:
+        records = await conn.fetch(
+            """
+            SELECT address, ads
+            FROM users.find_similar_ads_grouped($1::int)
+            """,
+            request_id
+        )
+
+    # Преобразуем Record в питоновские dict и возвращаем
+    return [
+        {"address": rec["address"], "ads": rec["ads"]}
+        for rec in records
+    ]
+

@@ -3,7 +3,7 @@ import logging
 from aiogram.types import Message
 # from handlers_common import process_user_input, show_parser_result
 # from parse_expense import parse_expense_t
-from listings_processor import export_listings_to_excel, extract_urls
+from listings_processor import export_listings_to_excel, extract_urls, export_sim_ads
 from aiogram.types.input_file import BufferedInputFile
 
 logger = logging.getLogger(__name__)
@@ -29,15 +29,32 @@ async def handle_text_message(message: Message):
         await message.answer("🔍 Ссылки не обнаружены. Пожалуйста, пришлите текст с cian ссылкой.")
 
 
-async def _handle_listings_export(urls: list, message: Message):
+async def _handle_listings_export(urls: list[str], message: Message):
     if not urls:
         return await message.answer("❗️ Не найдены ссылки для экспорта листингов.")
     try:
         user_id = message.from_user.id
-        bio = await export_listings_to_excel(urls, user_id)
+
+        # 1) Экспорт основных листингов
+        bio, request_id = await export_listings_to_excel(urls, user_id)
         bio.seek(0)
-        tg_file = BufferedInputFile(bio.getvalue(), filename="сравнение_квартир.xlsx")
-        await message.answer_document(tg_file)
+        tg_file_main = BufferedInputFile(
+            bio.getvalue(),
+            filename="сравнение_квартир.xlsx"
+        )
+        await message.answer_document(tg_file_main)
+
+        # 2) Экспорт похожих объявлений
+        sim_bio, _ = await export_sim_ads(request_id)
+        sim_bio.seek(0)
+        tg_file_sim = BufferedInputFile(
+            sim_bio.getvalue(),
+            filename="Еще_объявления_по_этим_квартирам.xlsx"
+        )
+        await message.answer_document(tg_file_sim)
+
     except Exception as e:
         logger.exception("Ошибка при экспорте листингов")
         await message.answer(f"❌ Не удалось сформировать файл: {e}")
+
+
