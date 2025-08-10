@@ -12,7 +12,7 @@ from datetime import datetime
 
 
 # Асинхронное сохранение в БД
-from db_handler import save_listings, find_similar_ads_grouped
+from db_handler import save_listings, find_similar_ads_grouped, call_update_ad
 
 # Заголовки для HTTP-запросов
 HEADERS = {
@@ -110,7 +110,13 @@ def parse_listing(url: str, session: requests.Session) -> dict:
     soup = BeautifulSoup(resp.text, 'html.parser')
 
     data = {'URL': url}
-    data['Статус'] = 'Снято' if soup.find(string=re.compile(r"Объявление снято", re.IGNORECASE)) else 'Активно'
+    # Определяем возможную блокировку (капча/антибот)
+    page_text = soup.get_text(" ", strip=True).lower()
+    is_blocked = bool(re.search(r"подтвердите, что запросы.*не робот|похожи на автоматические", page_text))
+    if is_blocked:
+        data['Статус'] = None
+    elif soup.find(string=re.compile(r"Объявление снято", re.IGNORECASE)):
+        data['Статус'] = 'Снято'
     labels = [span.get_text(strip=True) for span in soup.select('div[data-name="LabelsLayoutNew"] > span span:last-of-type')]
     data['Метки'] = '; '.join(labels) if labels else None
     h1 = soup.find('h1')
@@ -124,6 +130,9 @@ def parse_listing(url: str, session: requests.Session) -> dict:
     )
     if price_el:
         data['Цена_raw'] = extract_number(price_el.get_text())
+        # Если статус ещё не определён и удалось найти цену — считаем объявление активным
+        if 'Статус' not in data or data['Статус'] is None:
+            data['Статус'] = 'Активно'
 
     summary = soup.select_one('[data-name="OfferSummaryInfoLayout"]')
     if summary:
@@ -188,6 +197,71 @@ def extract_urls(raw_input: str) -> tuple[list[str], int]:
     urls = re.findall(r'https?://[^\s,;]+', raw_input)
     return urls, len(urls)
 
+
+async def check_and_update_ad_from_url(url: str, current_price: Any = None, current_is_active: Any = None) -> Dict[str, Any] | None:
+    """
+    Если ссылка относится к cian.ru — парсит её, определяет актуальность и цену с сайта.
+    Обновляет БД вызовом CALL users.update_ad(p_price, p_is_actual, p_code, p_url_id):
+      - p_is_actual всегда выставляется по странице: 1 если нет признака неактуальности, 0 если неактуально.
+      - p_price передаётся только если отличается от текущего (иначе NULL, чтобы не менять).
+    Возвращает dict с актуализированными полями (url, price, is_active), либо None если ссылка не cian.ru.
+    """
+    if "cian.ru" not in url:
+        return None
+
+    # Парсим объявление с сайта
+    try:
+        session = requests.Session()
+        parsed = parse_listing(url, session)
+    except Exception:
+        # Если парсинг не удался — не блокируем общий процесс
+        return None
+
+    # Приводим к ожидаемым ключам для сравнения/обновления
+    new_price_raw = parsed.get("Цена_raw") or parsed.get("Цена")
+    try:
+        new_price = int(new_price_raw) if new_price_raw is not None else None
+    except Exception:
+        new_price = None
+    new_status_text = parsed.get("Статус")
+    # Определяем актуальность только если статус распознан
+    new_is_active_bool = None
+    if isinstance(new_status_text, str):
+        s = new_status_text.strip().lower()
+        inactive_markers = ("снято", "снят", "неактив", "удален", "удалён", "нет в продаже")
+        new_is_active_bool = not any(m in s for m in inactive_markers)
+    new_is_actual = (1 if new_is_active_bool else 0) if new_is_active_bool is not None else None
+
+    # Извлекаем url_id — последняя числовая последовательность в ссылке (устойчиво к query/anchor)
+    digits = re.findall(r"/(\d+)(?:/|$)", url)
+    url_id = int(digits[-1]) if digits else None
+
+    # Формируем JSON для обновления
+    # Определяем, есть ли реальное изменение относительно текущих значений из БД
+    # Определяем, изменялась ли цена; статус (is_actual) всегда отправляем в БД по странице
+    price_changed = False
+    curr_price_int = None
+    if current_price is not None:
+        try:
+            curr_price_int = int(current_price)
+        except Exception:
+            curr_price_int = None
+    if curr_price_int is not None and new_price is not None and curr_price_int != int(new_price):
+        price_changed = True
+    # current_is_active может быть True/False либо 1/0 — используем только для сравнения цены
+
+    # Если url_id найден и есть изменения — вызываем обновление в БД
+    if url_id is not None:
+        try:
+            await call_update_ad(new_price if price_changed else None, new_is_actual, 4, url_id)
+        except Exception as e:
+            print(f"[DEBUG] call_update_ad failed for url_id={url_id}: {e}")
+
+    # Возвращаем актуализированное представление
+    result = {"url": url, "price": new_price}
+    if new_is_active_bool is not None:
+        result["is_active"] = new_is_active_bool
+    return result
 
 async def export_sim_ads(
     request_id: int,
@@ -256,8 +330,32 @@ async def export_sim_ads(
         for cell in ws[ws.max_row]:
             cell.font = bold
 
-        # — Данные по объявлениям
+        # — Данные по объявлениям (с проверкой и возможным обновлением из сайта для ссылок cian)
         for ad in ads:
+            # DEBUG: проверка обработки объявлений
+            try:
+                dbg_url = ad.get("url")
+                dbg_price = ad.get("price")
+                dbg_is_active = ad.get("is_active")
+                print(f"[DEBUG] check ad url={dbg_url!r} price={dbg_price!r} is_active={dbg_is_active!r}")
+            except Exception:
+                pass
+            # Если ссылка — на cian.ru, проверяем актуальные данные и при необходимости обновляем в БД
+            url_val = ad.get("url")
+            if isinstance(url_val, str) and "cian.ru" in url_val:
+                updated = await check_and_update_ad_from_url(
+                    url_val,
+                    current_price=ad.get("price"),
+                    current_is_active=ad.get("is_active"),
+                )
+                if updated:
+                    # Сравниваем с тем, что пришло из БД, и при отличии — подменяем значения в текущем кортеже
+                    if updated.get("price") is not None and updated.get("price") != ad.get("price"):
+                        ad["price"] = updated.get("price")
+                    # ВАЖНО: статус активности в Excel берём с сайта, а не из БД
+                    if "is_active" in updated:
+                        ad["is_active"] = bool(updated.get("is_active"))
+
             row = []
             for k in ordered_keys:
                 val = ad.get(k, "")

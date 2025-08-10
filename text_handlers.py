@@ -1,8 +1,6 @@
 import re
 import logging
 from aiogram.types import Message
-# from handlers_common import process_user_input, show_parser_result
-# from parse_expense import parse_expense_t
 from listings_processor import export_listings_to_excel, extract_urls, export_sim_ads
 from aiogram.types.input_file import BufferedInputFile
 

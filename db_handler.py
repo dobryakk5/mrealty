@@ -145,9 +145,7 @@ def parse_lifts(text: any) -> tuple[int | None, int | None]:
 async def save_listing(conn: asyncpg.Connection, listing: dict, request_id: int) -> None:
     listing = {k.replace('\u00A0', ' '): v for k, v in listing.items()}
 
-    # Debug raw lifts
-    raw_lifts = listing.get('Количество лифтов')
-    print(f"[DEBUG] Raw lifts: {raw_lifts!r}")
+    # Убрали отладочный вывод лифтов
 
     # Numeric fields
     price = clean_numeric(listing.get('Цена_raw'))
@@ -160,6 +158,7 @@ async def save_listing(conn: asyncpg.Connection, listing: dict, request_id: int)
     ceiling_height = clean_numeric(listing.get('Высота потолков'))
 
     # Parse lifts correctly
+    raw_lifts = listing.get('Количество лифтов')
     lift_p, lift_g = parse_lifts(raw_lifts)
 
     # Other parsed fields
@@ -287,4 +286,20 @@ async def find_similar_ads_grouped(request_id: int) -> List[Dict[str, Any]]:
         {"address": rec["address"], "ads": rec["ads"]}
         for rec in records
     ]
+
+
+async def call_update_ad(price: int | None, is_actual: int | None, code: int, url_id: int) -> None:
+    """
+    Вызывает хранимую процедуру users.update_ad с сигнатурой:
+      (p_price bigint, p_is_actual smallint, p_code smallint, p_url_id numeric)
+    price: новая цена (или None, чтобы не изменять)
+    is_actual: 1 или 0 (или None, чтобы не изменять)
+    code: источник (smallint), например 4
+    url_id: идентификатор объявления
+    """
+    pool = await _get_pool()
+    query = "CALL users.update_ad($1::bigint, $2::smallint, $3::smallint, $4::numeric)"
+    async with pool.acquire() as conn:
+        await conn.execute(query, price, is_actual, code, url_id)
+
 
