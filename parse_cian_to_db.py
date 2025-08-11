@@ -777,9 +777,6 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
             print(f"\n📍 Станция {i+1}/{len(metro_stations)}: {station_name} (CIAN ID: {station_cian_id})")
             print("-" * 60)
             
-            # Обновляем прогресс
-            await update_parsing_progress(session_id, station['id'], i + 1)
-            
             # Создаем URL для конкретной станции
             search_url = build_search_url(property_type, time_period, station_cian_id, foot_min)
             print(f"URL: {search_url}")
@@ -797,6 +794,9 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
             print(f"Станция {station_name} обработана:")
             print(f"   Всего объявлений: {station_total}")
             print(f"   Сохранено в БД: {station_saved}")
+            
+            # Обновляем прогресс ПОСЛЕ успешной обработки станции
+            await update_parsing_progress(session_id, station['id'], i + 1)
             
             print("-" * 60)
             
