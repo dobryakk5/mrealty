@@ -60,6 +60,28 @@ async def create_ads_cian_table() -> None:
             
             """)
             print("[DB] Таблица ads_cian создана успешно")
+            
+            # Создаем схему system если её нет
+            await conn.execute("CREATE SCHEMA IF NOT EXISTS system")
+            
+            # Создаем таблицу для отслеживания прогресса парсинга
+            await conn.execute("""
+            CREATE TABLE IF NOT EXISTS system.parsing_progress (
+                id SERIAL PRIMARY KEY,
+                property_type INTEGER NOT NULL,
+                time_period INTEGER NOT NULL,
+                current_metro_id INTEGER NOT NULL,
+                time_upd TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'active',
+                total_metros INTEGER,
+                processed_metros INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_parsing_progress_latest ON system.parsing_progress(property_type, time_period, time_upd DESC);
+            """)
+            print("[DB] Таблица system.parsing_progress создана успешно")
+                
         except Exception as e:
             print(f"[DB] Ошибка создания таблицы ads_cian: {e}")
             raise
