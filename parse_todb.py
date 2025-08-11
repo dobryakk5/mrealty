@@ -4,8 +4,10 @@
 """
 
 import os
+import re
+from datetime import datetime
 import asyncpg
-from typing import Dict
+from typing import Dict, Optional
 from dotenv import load_dotenv
 
 # Load environment
@@ -41,21 +43,21 @@ async def create_ads_cian_table() -> None:
                 floor SMALLINT,
                 total_floors SMALLINT,
                 complex TEXT,
-                metro TEXT,
+                metro_id INTEGER,
                 min_metro SMALLINT,
                 address TEXT,
+                district_id INTEGER,
                 tags TEXT,
                 person_type TEXT,
                 person TEXT,
+                object_type_id SMALLINT,
+                source_created TIMESTAMP NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(avitoid)
             );
             
             CREATE INDEX IF NOT EXISTS idx_ads_cian_avitoid ON ads_cian(avitoid);
-            CREATE INDEX IF NOT EXISTS idx_ads_cian_price ON ads_cian(price);
-            CREATE INDEX IF NOT EXISTS idx_ads_cian_rooms ON ads_cian(rooms);
-            CREATE INDEX IF NOT EXISTS idx_ads_cian_metro ON ads_cian(metro);
-            CREATE INDEX IF NOT EXISTS idx_ads_cian_person_type ON ads_cian(person_type);
+            
             """)
             print("[DB] Таблица ads_cian создана успешно")
         except Exception as e:
@@ -63,8 +65,8 @@ async def create_ads_cian_table() -> None:
             raise
 
 
-async def save_cian_ad(ad_data: Dict) -> None:
-    """Сохраняет объявление CIAN в БД"""
+async def save_cian_ad(ad_data: Dict) -> bool:
+    """Сохраняет объявление CIAN в БД. Возвращает True, если добавлено, False если дубликат."""
     pool = await _get_cian_pool()
     async with pool.acquire() as conn:
         try:
@@ -78,26 +80,35 @@ async def save_cian_ad(ad_data: Dict) -> None:
 
             price = ad_data.get('price')
             
-            # Обработка комнат
+            # Обработка комнат: 0, если пришла строка, не являющаяся числом
             rooms = None
-            if ad_data.get('rooms') == 'студия':
-                rooms = 0
-            elif ad_data.get('rooms'):
+            raw_rooms = ad_data.get('rooms')
+            if raw_rooms is None:
+                rooms = None
+            elif isinstance(raw_rooms, (int, float)):
                 try:
-                    rooms = int(ad_data['rooms'])
-                except (ValueError, TypeError):
-                    pass
+                    rooms = int(raw_rooms)
+                except Exception:
+                    rooms = None
+            elif isinstance(raw_rooms, str):
+                s = raw_rooms.strip()
+                if re.fullmatch(r"\d+", s):
+                    rooms = int(s)
+                else:
+                    rooms = 0
 
             # Парсим метро и время
-            metro = None
             min_metro = None
-            if ad_data.get('metro'):
-                metro_str = ad_data['metro']
-                # Убираем время в скобках из названия метро
-                if '(' in metro_str:
-                    metro = metro_str.split('(')[0].strip()
-                else:
-                    metro = metro_str
+            metro_id = None
+            
+            # Получаем metro_id по cian_id из таблицы metro
+            station_cian_id = ad_data.get('station_cian_id')
+            if station_cian_id:
+                metro_id = await conn.fetchval("""
+                    SELECT id FROM metro 
+                    WHERE cian_id = $1
+                    LIMIT 1
+                """, station_cian_id)
             
             if ad_data.get('walk_minutes'):
                 try:
@@ -105,10 +116,77 @@ async def save_cian_ad(ad_data: Dict) -> None:
                 except (ValueError, TypeError):
                     pass
 
-            # Адрес из geo_labels
+            # Адрес/район из geo_labels по правилам:
+            # 1) Фильтруем элементы, содержащие метро
+            # 2) Проверяем все элементы на наличие "р-н" - выносим в district_id
+            # 3) Остальные элементы объединяем в address
             address = None
+            district_id = None
+            
             if ad_data.get('geo_labels'):
-                address = ', '.join(ad_data['geo_labels'])
+                # Фильтруем элементы, исключая метро
+                metro_stop_words = ['м.', 'м ', 'метро', 'станция', 'станции']
+                filtered_geo = []
+                
+                for geo_item in ad_data['geo_labels']:
+                    geo_str = str(geo_item).strip()
+                    if geo_str:
+                        # Проверяем, не содержит ли элемент метро
+                        geo_lower = geo_str.lower()
+                        is_metro = any(stop_word in geo_lower for stop_word in metro_stop_words)
+                        
+                        if not is_metro:
+                            filtered_geo.append(geo_str)
+                
+                if filtered_geo:
+                    # Ищем элемент с районом
+                    district_item = None
+                    address_items = []
+                    
+                    # Обрабатываем элементы по порядку
+                    district_found = False
+                    for i, item in enumerate(filtered_geo):
+                        # Если район уже найден, все последующие элементы идут в address
+                        if district_found:
+                            address_items.append(item)
+                            continue
+                        
+                        # Проверяем, является ли элемент районом
+                        district_patterns = [
+                            r'\bр-?н\b',           # р-н, рн
+                            r'\bрайон\b',          # район
+                            r'\bр-он\b',           # р-он
+                            r'\bр\.н\.\b',         # р.н.
+                        ]
+                        
+                        is_district = False
+                        for pattern in district_patterns:
+                            if re.search(pattern, item, re.IGNORECASE):
+                                is_district = True
+                                # Убираем все варианты написания района
+                                cleaned_item = re.sub(r'\bр-?н\b|\bрайон\b|\bр-он\b|\bр\.н\.\b', '', item, flags=re.IGNORECASE).strip()
+                                district_item = cleaned_item
+                                district_found = True
+                                break
+                        
+                        if is_district:
+                            # Найден район - не добавляем в адрес
+                            pass
+                        else:
+                            # Не район - добавляем в адрес
+                            address_items.append(item)
+                    
+                    # Формируем адрес и ищем district_id
+                    if district_item:
+                        # Ищем district_id по названию района
+                        district_id = await conn.fetchval("""
+                            SELECT id FROM districts 
+                            WHERE LOWER(name) = LOWER($1)
+                            LIMIT 1
+                        """, district_item)
+                    
+                    if address_items:
+                        address = ', '.join(address_items)
 
             # Метки
             tags = None
@@ -122,11 +200,11 @@ async def save_cian_ad(ad_data: Dict) -> None:
             
             if seller.get('type'):
                 type_mapping = {
-                    'owner': 'собственник',
-                    'agency': 'агентство', 
-                    'user': 'пользователь',
-                    'private': 'частное лицо',
-                    'developer': 'застройщик'
+                    'owner': 3,
+                    'agency': 2, 
+                    'user': 5,
+                    'private': 1,
+                    'developer': 4
                 }
                 person_type = type_mapping.get(seller['type'], seller['type'])
             
@@ -143,12 +221,30 @@ async def save_cian_ad(ad_data: Dict) -> None:
             query = """
             INSERT INTO ads_cian (
                 url, avitoid, price, rooms, area, floor, total_floors, 
-                complex, metro, min_metro, address, tags, person_type, person
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                complex, metro_id, min_metro, address, district_id, tags, person_type, person, object_type_id, source_created
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (avitoid) DO NOTHING
             """
             
-            result = await conn.execute(query, 
+            # Нормализуем source_created (ожидается datetime для TIMESTAMP)
+            created_value = ad_data.get('created_dt')
+            if isinstance(created_value, str):
+                try:
+                    created_value = datetime.strptime(created_value, '%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    created_value = None
+            elif not (hasattr(created_value, 'year') and hasattr(created_value, 'hour')):
+                created_value = None
+
+            # Очищаем название жилищного комплекса
+            complex_name = ad_data.get('complex')
+            if complex_name:
+                # Убираем "ЖК" и кавычки
+                complex_name = re.sub(r'^ЖК\s*[«"]?', '', complex_name)  # Убираем "ЖК " в начале
+                complex_name = re.sub(r'[»"]$', '', complex_name)  # Убираем кавычки в конце
+                complex_name = complex_name.strip()  # Убираем лишние пробелы
+
+            result = await conn.execute(query,
                 ad_data.get('URL'),
                 avitoid,
                 price,
@@ -156,20 +252,25 @@ async def save_cian_ad(ad_data: Dict) -> None:
                 ad_data.get('area_m2'),
                 ad_data.get('floor'),
                 ad_data.get('floor_total'),
-                ad_data.get('complex'),
-                metro,
+                complex_name,
+                metro_id,
                 min_metro,
                 address,
+                district_id,  # district_id
                 tags,
                 person_type,
-                person
+                person,
+                (1 if ad_data.get('property_type') == 2 else 2 if ad_data.get('property_type') == 1 else None),  # 2=новостройка→1, 1=вторичка→2, не указан→NULL
+                created_value
             )
             
             # Проверяем, была ли запись добавлена
             if "INSERT 0 1" in result:
                 print(f"[DB] Добавлено объявление {avitoid}: {ad_data.get('URL')}")
+                return True
             else:
                 print(f"[DB] Пропущено (дубликат) объявление {avitoid}: {ad_data.get('URL')}")
+                return False
             
         except Exception as e:
             print(f"[DB] Ошибка сохранения объявления: {e}")
@@ -317,8 +418,24 @@ async def delete_old_cian_ads(days: int = 30) -> int:
 
 
 async def close_cian_pool():
-    """Закрывает пул подключений"""
+    """Закрывает пул подключений для ads_cian"""
     global _cian_db_pool
     if _cian_db_pool:
         await _cian_db_pool.close()
         _cian_db_pool = None
+
+async def get_all_metro_stations() -> list:
+    """Получает все станции метро из БД для обработки"""
+    try:
+        pool = await _get_cian_pool()
+        async with pool.acquire() as conn:
+            stations = await conn.fetch("""
+                SELECT id, name, cian_id
+                FROM metro
+                WHERE cian_id IS NOT NULL
+                ORDER BY line_id, id
+            """)
+            return [dict(station) for station in stations]
+    except Exception as e:
+        print(f"❌ Ошибка получения станций метро: {e}")
+        return []
