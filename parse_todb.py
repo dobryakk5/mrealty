@@ -440,11 +440,106 @@ async def delete_old_cian_ads(days: int = 30) -> int:
 
 
 async def close_cian_pool():
-    """Закрывает пул подключений для ads_cian"""
+    """Закрывает пул соединений с БД"""
     global _cian_db_pool
     if _cian_db_pool:
         await _cian_db_pool.close()
         _cian_db_pool = None
+        print("[DB] Пул соединений с БД закрыт")
+
+async def create_parsing_session(property_type: int, time_period: int, total_metros: int) -> int:
+    """Создает новую сессию парсинга для all запуска. Возвращает ID сессии."""
+    pool = await _get_cian_pool()
+    async with pool.acquire() as conn:
+        try:
+            # Получаем первую станцию метро для начала (metro.id для записи в parsing_progress)
+            first_metro = await conn.fetchrow("""
+                SELECT id, cian_id FROM metro 
+                ORDER BY id 
+                LIMIT 1
+            """)
+            
+            if not first_metro:
+                raise Exception("Не найдено ни одной станции метро")
+            
+            # Создаем запись о новой сессии (записываем metro.id)
+            session_id = await conn.fetchval("""
+                INSERT INTO system.parsing_progress 
+                (property_type, time_period, current_metro_id, total_metros, status)
+                VALUES ($1, $2, $3, $4, 'active')
+                RETURNING id
+            """, property_type, time_period, first_metro['id'], total_metros)
+            
+            print(f"[PROGRESS] Создана сессия парсинга ID {session_id}, начинаем с метро ID {first_metro['id']} (CIAN ID: {first_metro['cian_id']})")
+            return session_id
+            
+        except Exception as e:
+            print(f"[PROGRESS] Ошибка создания сессии парсинга: {e}")
+            raise
+
+async def update_parsing_progress(session_id: int, current_metro_id: int, processed_count: int = None):
+    """Обновляет прогресс парсинга - текущую станцию (metro.id) и время обновления."""
+    pool = await _get_cian_pool()
+    async with pool.acquire() as conn:
+        try:
+            update_fields = ["current_metro_id = $2", "time_upd = CURRENT_TIMESTAMP"]
+            params = [session_id, current_metro_id]
+            
+            if processed_count is not None:
+                update_fields.append("processed_metros = $3")
+                params.append(processed_count)
+            
+            query = f"""
+                UPDATE system.parsing_progress 
+                SET {', '.join(update_fields)}
+                WHERE id = $1
+            """
+            
+            await conn.execute(query, *params)
+            print(f"[PROGRESS] Обновлен прогресс сессии {session_id}: метро ID {current_metro_id}")
+            
+        except Exception as e:
+            print(f"[PROGRESS] Ошибка обновления прогресса: {e}")
+
+async def complete_parsing_session(session_id: int):
+    """Завершает сессию парсинга - устанавливает status = 'completed'."""
+    pool = await _get_cian_pool()
+    async with pool.acquire() as conn:
+        try:
+            await conn.execute("""
+                UPDATE system.parsing_progress 
+                SET status = 'completed', time_upd = CURRENT_TIMESTAMP
+                WHERE id = $1
+            """, session_id)
+            
+            print(f"[PROGRESS] Завершена сессия парсинга ID {session_id}")
+            
+        except Exception as e:
+            print(f"[PROGRESS] Ошибка завершения сессии: {e}")
+
+async def get_last_parsing_progress(property_type: int, time_period: int) -> dict:
+    """Получает последний прогресс парсинга для указанных параметров."""
+    pool = await _get_cian_pool()
+    async with pool.acquire() as conn:
+        try:
+            progress = await conn.fetchrow("""
+                SELECT id, current_metro_id, total_metros, processed_metros, status
+                FROM system.parsing_progress 
+                WHERE property_type = $1 AND time_period = $2
+                ORDER BY time_upd DESC 
+                LIMIT 1
+            """, property_type, time_period)
+            
+            if progress:
+                print(f"[PROGRESS] Найден прогресс: сессия {progress['id']}, метро ID {progress['current_metro_id']}, статус: {progress['status']}")
+                return dict(progress)
+            else:
+                print(f"[PROGRESS] Прогресс не найден для property_type={property_type}, time_period={time_period}")
+                return None
+                
+        except Exception as e:
+            print(f"[PROGRESS] Ошибка получения прогресса: {e}")
+            return None
 
 async def get_all_metro_stations() -> list:
     """Получает все станции метро из БД для обработки"""
@@ -455,7 +550,7 @@ async def get_all_metro_stations() -> list:
                 SELECT id, name, cian_id
                 FROM metro
                 WHERE cian_id IS NOT NULL
-                ORDER BY line_id, id
+                ORDER BY id
             """)
             return [dict(station) for station in stations]
     except Exception as e:

@@ -38,7 +38,15 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 
 # Импортируем функции работы с БД
-from parse_todb import create_ads_cian_table, save_cian_ad, get_all_metro_stations
+from parse_todb import (
+    create_ads_cian_table, 
+    save_cian_ad, 
+    get_all_metro_stations,
+    get_last_parsing_progress,
+    create_parsing_session,
+    update_parsing_progress,
+    complete_parsing_session
+)
 
 # ========== ФУНКЦИИ ПАРСИНГА АРГУМЕНТОВ ==========
 
@@ -89,15 +97,15 @@ def convert_time_period(time_period: str) -> int:
 PROPERTY_TYPE = 1  # 1=вторичка, 2=новостройки
 TIME_PERIOD = 604800  # 3600=час, 86400=день, 604800=неделя, -2=сегодня
 # Перебираем все страницы до отсутствия карточек
-MAX_PAGES = 1  # Увеличено для работы с логикой остановки по дубликатам
+MAX_PAGES = 100  # Увеличено для работы с логикой остановки по дубликатам
 # Не ограничиваем кол-во карточек на странице
-MAX_URLS = 3
+MAX_URLS = 30
 # Пауза между страницами по требованию
 REQUEST_DELAY = 3.0
 PROXY = "http://qEpxaS:uq2shh@194.67.220.161:9889"
 
 # по метро
-METRO_ID = 13  # "all" для всех станций, или конкретный ID (например: 68 для "Маяковская")
+METRO_ID = "all"  # "all" для всех станций, или конкретный ID (например: 68 для "Маяковская")
 FOOT_MIN = 20  # Время в пути до метро в минутах (например: 20)
 
 # Примеры использования:
@@ -726,16 +734,56 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
         print(f"🚇 Обработка ВСЕХ станций метро ({len(metro_stations)} станций)")
         print("=" * 80)
         
+        # Проверяем, есть ли незавершенная сессия
+        progress = await get_last_parsing_progress(property_type, time_period)
+        
+        if progress and progress['status'] == 'active':
+            # Продолжаем с места остановки
+            print(f"🔄 Продолжаем незавершенную сессию {progress['id']} с метро ID {progress['current_metro_id']}")
+            session_id = progress['id']
+            
+            # Находим следующую станцию по metro.id (не по позиции)
+            current_index = None
+            print(f"[DEBUG] Ищем следующую станцию после metro.id = {progress['current_metro_id']}")
+            
+            # Ищем станцию с metro.id максимально близким к текущему, но больше
+            target_metro_id = progress['current_metro_id']
+            best_match = None
+            best_index = None
+            
+            for i, station in enumerate(metro_stations):
+                if station['id'] > target_metro_id:
+                    if best_match is None or station['id'] < best_match['id']:
+                        best_match = station
+                        best_index = i
+            
+            if best_match:
+                current_index = best_index
+                print(f"[DEBUG] Найдена следующая станция: metro.id = {best_match['id']}, {best_match['name']} на позиции {best_index}")
+            else:
+                print(f"⚠️ Следующая станция после metro.id = {progress['current_metro_id']} не найдена, начинаем сначала")
+                current_index = 0
+                session_id = await create_parsing_session(property_type, time_period, len(metro_stations))
+        else:
+            # Создаем новую сессию
+            print("🆕 Создаем новую сессию парсинга")
+            session_id = await create_parsing_session(property_type, time_period, len(metro_stations))
+            current_index = 0
+        
         all_cards = []
         total_saved = 0
         
-        # Обрабатываем каждую станцию последовательно
-        for i, station in enumerate(metro_stations, 1):
+        # Обрабатываем станции начиная с текущего индекса
+        for i in range(current_index, len(metro_stations)):
+            station = metro_stations[i]
             station_cian_id = station['cian_id']
             station_name = station['name']
             
-            print(f"\n📍 Станция {i}/{len(metro_stations)}: {station_name} (CIAN ID: {station_cian_id})")
+            print(f"\n📍 Станция {i+1}/{len(metro_stations)}: {station_name} (CIAN ID: {station_cian_id})")
             print("-" * 60)
+            
+            # Обновляем прогресс
+            await update_parsing_progress(session_id, station['id'], i + 1)
             
             # Создаем URL для конкретной станции
             search_url = build_search_url(property_type, time_period, station_cian_id, foot_min)
@@ -761,9 +809,13 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
             total_saved += station_saved
             
             # Пауза между станциями
-            if i < len(metro_stations):
-                print(f"⏳ Пауза 5 сек перед следующей станцией...")
-                time.sleep(5)
+            if i < len(metro_stations) - 1:
+                print(f"⏳ Пауза 34 сек перед следующей станцией...")
+                time.sleep(34)
+        
+        # Завершаем сессию
+        await complete_parsing_session(session_id)
+        print(f"✅ Все станции обработаны. Сессия {session_id} завершена.")
         
         return all_cards
     elif metro_id is not None:
@@ -836,6 +888,9 @@ async def main():
     print(f"Тип недвижимости: {'вторичка' if property_type == 1 else 'новостройки'}")
     period_names = {3600: 'час', 86400: 'день', 604800: 'неделя'}
     print(f"Период времени: {period_names.get(time_period_seconds, str(time_period_seconds))}")
+
+    # Создаем таблицы БД если их нет
+    await create_ads_cian_table()
 
     cards = await fetch_and_save_listings(
         property_type=property_type,
