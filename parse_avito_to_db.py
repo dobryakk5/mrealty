@@ -18,7 +18,7 @@ from typing import List, Dict
 from parse_todb_avito import create_ads_avito_table, save_avito_ad
 
 # Настройки
-BASE_SEARCH_URL = "https://www.avito.ru/moskva/kvartiry?context=H4sIAAAAAAAA_wEjANz_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
+BASE_SEARCH_URL = "https://www.avito.ru/moskva/kvartiry/prodam/vtorichka-ASgBAgICAkSSA8YQ5geMUg"
 REQUEST_DELAY = 4.0
 HEADERS_BASE = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',

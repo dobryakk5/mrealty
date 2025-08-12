@@ -159,3 +159,69 @@ async def save_avito_ad(ad_data: Dict) -> None:
             print(f"[DB] Добавлено объявление AVITO {avitoid}: {ad_data.get('URL')}")
         else:
             print(f"[DB] Пропущено (дубликат) AVITO {avitoid}: {ad_data.get('URL')}")
+
+
+async def create_avito_api_table() -> None:
+    """Создает таблицу avito_api для API парсера"""
+    pool = await _get_avito_pool()
+    async with pool.acquire() as conn:
+        # Удаляем старую таблицу если она существует
+        await conn.execute("DROP TABLE IF EXISTS avito_api CASCADE")
+        
+        # Создаем новую таблицу с полем url
+        await conn.execute(
+            """
+            CREATE TABLE avito_api (
+                id SERIAL PRIMARY KEY,
+                avitoid NUMERIC UNIQUE NOT NULL,
+                title TEXT,
+                deal_type SMALLINT, -- 1: продажа, 2: аренда
+                price BIGINT,
+                metro TEXT,
+                url TEXT, -- URL без контекста
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        
+        # Создаем индекс
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_avito_api_avitoid ON avito_api(avitoid)"
+        )
+        
+        print("[DB] Таблица avito_api пересоздана с полем url")
+
+async def save_avito_api_item(data: dict) -> None:
+    """Сохраняет объявление в таблицу avito_api"""
+    pool = await _get_avito_pool()
+    async with pool.acquire() as conn:
+        try:
+            avitoid = None
+            if data.get('offer_id'):
+                try:
+                    avitoid = int(data['offer_id'])
+                except (ValueError, TypeError):
+                    pass
+
+            price = data.get('price')
+            
+            await conn.execute(
+                """
+                INSERT INTO avito_api (
+                    avitoid, title, deal_type, price, metro, url
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+                ON CONFLICT (avitoid) DO NOTHING
+                """,
+                avitoid,
+                data.get('title'),
+                2 if data.get('deal_type') == 'rental' else 1,  # 2: аренда, 1: продажа
+                price,
+                data.get('metro'),
+                data.get('url_clean')  # URL без контекста
+            )
+            print(f"[DB] Добавлено объявление API AVITO {data.get('offer_id')}")
+            return True
+        except Exception as e:
+            print(f"[DB] Ошибка сохранения в avito_api: {e}")
+            return False
+
