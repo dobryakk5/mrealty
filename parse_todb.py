@@ -69,7 +69,7 @@ async def create_ads_cian_table() -> None:
             CREATE TABLE IF NOT EXISTS system.parsing_progress (
                 id SERIAL PRIMARY KEY,
                 property_type INTEGER NOT NULL,
-                time_period INTEGER NOT NULL,
+                time_period INTEGER,  -- Может быть NULL для отключения фильтра по времени
                 current_metro_id INTEGER NOT NULL,
                 time_upd TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 status TEXT DEFAULT 'active',
@@ -79,6 +79,7 @@ async def create_ads_cian_table() -> None:
             );
             
             CREATE INDEX IF NOT EXISTS idx_parsing_progress_latest ON system.parsing_progress(property_type, time_period, time_upd DESC);
+            CREATE INDEX IF NOT EXISTS idx_parsing_progress_no_time ON system.parsing_progress(property_type, time_upd DESC) WHERE time_period IS NULL;
             """)
             print("[DB] Таблица system.parsing_progress создана успешно")
                 
@@ -447,7 +448,7 @@ async def close_cian_pool():
         _cian_db_pool = None
         print("[DB] Пул соединений с БД закрыт")
 
-async def create_parsing_session(property_type: int, time_period: int, total_metros: int) -> int:
+async def create_parsing_session(property_type: int, time_period: int = None, total_metros: int = None) -> int:
     """Создает новую сессию парсинга для all запуска. Возвращает ID сессии."""
     pool = await _get_cian_pool()
     async with pool.acquire() as conn:
@@ -517,18 +518,28 @@ async def complete_parsing_session(session_id: int):
         except Exception as e:
             print(f"[PROGRESS] Ошибка завершения сессии: {e}")
 
-async def get_last_parsing_progress(property_type: int, time_period: int) -> dict:
+async def get_last_parsing_progress(property_type: int, time_period: int = None) -> dict:
     """Получает последний прогресс парсинга для указанных параметров."""
     pool = await _get_cian_pool()
     async with pool.acquire() as conn:
         try:
-            progress = await conn.fetchrow("""
-                SELECT id, current_metro_id, total_metros, processed_metros, status
-                FROM system.parsing_progress 
-                WHERE property_type = $1 AND time_period = $2
-                ORDER BY time_upd DESC 
-                LIMIT 1
-            """, property_type, time_period)
+            # Для NULL time_period используем специальный запрос
+            if time_period is None:
+                progress = await conn.fetchrow("""
+                    SELECT id, current_metro_id, total_metros, processed_metros, status
+                    FROM system.parsing_progress 
+                    WHERE property_type = $1 AND time_period IS NULL
+                    ORDER BY time_upd DESC 
+                    LIMIT 1
+                """, property_type)
+            else:
+                progress = await conn.fetchrow("""
+                    SELECT id, current_metro_id, total_metros, processed_metros, status
+                    FROM system.parsing_progress 
+                    WHERE property_type = $1 AND time_period = $2
+                    ORDER BY time_upd DESC 
+                    LIMIT 1
+                """, property_type, time_period)
             
             if progress:
                 print(f"[PROGRESS] Найден прогресс: сессия {progress['id']}, метро ID {progress['current_metro_id']}, статус: {progress['status']}")

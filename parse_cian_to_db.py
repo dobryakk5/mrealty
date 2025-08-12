@@ -5,7 +5,7 @@
 
 ФИЛЬТРЫ ПОИСКА:
 1. Тип жилья (property_type): 1=вторичка, 2=новостройки
-2. Время публикации (time_period): w=неделя, d=день, h=час
+2. Время публикации (time_period): w=неделя, d=день, h=час, none=без ограничений
 3. Станция метро (metro_id): ID станции из ЦИАН (например: 68 для "Маяковская")
 4. Время до метро (foot_min): Время в пути пешком в минутах (например: 20)
 
@@ -20,13 +20,14 @@
 3. Запустите скрипт: python parse_cian_to_db.py
 
 АРГУМЕНТЫ КОМАНДНОЙ СТРОКИ:
-[тип][период] - где тип=1(вторичка) или 2(новостройки), период=w(неделя), d(день), h(час)
+[тип][период] - где тип=1(вторичка) или 2(новостройки), период=w(неделя), d(день), h(час), none(без ограничений)
 
 ПРИМЕРЫ:
 python parse_cian_to_db.py          # значения по умолчанию
 python parse_cian_to_db.py 2w       # новостройки за неделю
 python parse_cian_to_db.py 1d       # вторичка за день
 python parse_cian_to_db.py 2h       # новостройки за час
+python parse_cian_to_db.py 1none    # вторичка без ограничений по времени
 """
 
 import argparse
@@ -58,15 +59,31 @@ def parse_arguments():
         'params',
         nargs='?',
         type=str,
-        help='Параметры в формате: [тип][период] (например: 2w, 1d, 2h)'
+        help='Параметры в формате: [тип][период] (например: 2w, 1d, 2h, 1none)'
     )
     
     return parser.parse_args()
 
 def parse_params_string(params_str: str) -> tuple[int, str]:
-    """Парсит строку параметров в формате [тип][период]"""
+    """
+    Парсит строку параметров в формате [тип][период]
+    
+    Args:
+        params_str: Строка параметров (например: "2w", "1d", "2h", "1none")
+    
+    Returns:
+        tuple: (тип_недвижимости, период_времени)
+        
+    Периоды времени:
+        w - неделя
+        d - день  
+        h - час
+        none - без ограничений по времени
+    """
     if not params_str:
-        return PROPERTY_TYPE, 'w'  # значения по умолчанию
+        # Используем значения из настроек
+        default_time_period = 'none' if TIME_PERIOD is None else 'w'
+        return PROPERTY_TYPE, default_time_period
     
     # Первый символ - тип недвижимости
     if params_str[0] in ['1', '2']:
@@ -79,13 +96,16 @@ def parse_params_string(params_str: str) -> tuple[int, str]:
         time_period = params_str
     
     # Проверяем корректность периода времени
-    if time_period not in ['w', 'd', 'h']:
+    if time_period not in ['w', 'd', 'h', 'none']:
         time_period = 'w'  # по умолчанию неделя
     
     return property_type, time_period
 
 def convert_time_period(time_period: str) -> int:
-    """Конвертирует символьный период времени в секунды"""
+    """Конвертирует символьный период времени в секунды или None для отключения фильтра"""
+    if time_period == 'none':
+        return None  # отключаем фильтр по времени
+    
     time_mapping = {
         'h': 3600,      # час
         'd': 86400,     # день
@@ -95,7 +115,7 @@ def convert_time_period(time_period: str) -> int:
 
 # ========== НАСТРОЙКИ ==========
 PROPERTY_TYPE = 1  # 1=вторичка, 2=новостройки
-TIME_PERIOD = 604800  # 3600=час, 86400=день, 604800=неделя, -2=сегодня
+TIME_PERIOD = None  # 3600=час, 86400=день, 604800=неделя, None=без ограничений
 # Перебираем все страницы до отсутствия карточек
 MAX_PAGES = 100  # Увеличено для работы с логикой остановки по дубликатам
 # Не ограничиваем кол-во карточек на странице
@@ -191,9 +211,23 @@ def format_price(raw):
     except Exception:
         return str(raw)
 
-def build_search_url(property_type: int, time_period: int, metro_id: int = None, foot_min: int = None) -> str:
+def build_search_url(property_type: int, time_period: int = None, metro_id: int = None, foot_min: int = None) -> str:
+    """
+    Строит URL для поиска на CIAN
+    
+    Args:
+        property_type: Тип недвижимости (1=вторичка, 2=новостройки)
+        time_period: Период времени в секундах или None для отключения фильтра
+        metro_id: ID станции метро или None
+        foot_min: Время до метро в минутах или None
+    """
     base_url = "https://www.cian.ru/cat.php?deal_type=sale&engine_version=2&offer_type=flat&region=1&only_foot=2"
-    url = f"{base_url}&object_type%5B0%5D={property_type}&totime={time_period}"
+    url = f"{base_url}&object_type%5B0%5D={property_type}"
+    
+    # Добавляем фильтр по времени только если time_period указан
+    if time_period is not None:
+        url += f"&totime={time_period}"
+    
     only_foot=2
     if property_type == 2:
         url += "&with_newobject=1"
@@ -693,8 +727,8 @@ async def process_single_metro_station(
                 print(f"   ⚠️ Страница {page} содержит только дубликаты (счетчик: {duplicate_pages_count})")
                 
                 # Если 2 страниц подряд содержат только дубликаты - останавливаемся
-                if duplicate_pages_count >= 2:
-                    print(f"   🛑 Остановка: 2 страниц подряд содержат только дубликаты")
+                if duplicate_pages_count >= 4:
+                    print(f"   🛑 Остановка: 4 страниц подряд содержат только дубликаты")
                     break
             else:
                 # Сбрасываем счетчик дубликатов при наличии новых карточек
@@ -805,8 +839,8 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
             
             # Пауза между станциями
             if i < len(metro_stations) - 1:
-                print(f"⏳ Пауза 34 сек перед следующей станцией...")
-                time.sleep(34)
+                print(f"⏳ Пауза 9 сек перед следующей станцией...")
+                time.sleep(9)
         
         # Завершаем сессию
         await complete_parsing_session(session_id)
@@ -819,8 +853,11 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
         print(f"URL поиска: {search_url}")
         print(f"Тип: {'вторичка' if property_type == 1 else 'новостройки'}")
         
-        period_names = {3600: 'час', 86400: 'день', 604800: 'неделя'}
-        print(f"Период: {period_names.get(time_period, str(time_period))}")
+        if time_period is None:
+            print("Период: без ограничений")
+        else:
+            period_names = {3600: 'час', 86400: 'день', 604800: 'неделя'}
+            print(f"Период: {period_names.get(time_period, str(time_period))}")
         
         print(f"Метро: ID {metro_id}")
         if foot_min is not None:
@@ -838,8 +875,11 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
         print(f"URL поиска: {search_url}")
         print(f"Тип: {'вторичка' if property_type == 1 else 'новостройки'}")
         
-        period_names = {3600: 'час', 86400: 'день', 604800: 'неделя'}
-        print(f"Период: {period_names.get(time_period, str(time_period))}")
+        if time_period is None:
+            print("Период: без ограничений")
+        else:
+            period_names = {3600: 'час', 86400: 'день', 604800: 'неделя'}
+            print(f"Период: {period_names.get(time_period, str(time_period))}")
         print("Метро: фильтр не применяется")
         
         if foot_min is not None:
@@ -881,8 +921,11 @@ async def main():
     time_period_seconds = convert_time_period(time_period)
     
     print(f"Тип недвижимости: {'вторичка' if property_type == 1 else 'новостройки'}")
-    period_names = {3600: 'час', 86400: 'день', 604800: 'неделя'}
-    print(f"Период времени: {period_names.get(time_period_seconds, str(time_period_seconds))}")
+    if time_period_seconds is None:
+        print("Период времени: без ограничений")
+    else:
+        period_names = {3600: 'час', 86400: 'день', 604800: 'неделя'}
+        print(f"Период времени: {period_names.get(time_period_seconds, str(time_period_seconds))}")
 
     # Создаем таблицы БД если их нет
     await create_ads_cian_table()
