@@ -62,6 +62,18 @@ def parse_arguments():
         help='Параметры в формате: [тип][период] (например: 2w, 1d, 2h, 1none)'
     )
     
+    parser.add_argument(
+        '--proxy',
+        action='store_true',
+        help='Использовать прокси для запросов'
+    )
+    
+    parser.add_argument(
+        '--no-proxy',
+        action='store_true',
+        help='Отключить прокси для запросов'
+    )
+    
     return parser.parse_args()
 
 def parse_params_string(params_str: str) -> tuple[int, str]:
@@ -108,7 +120,7 @@ def convert_time_period(time_period: str) -> int:
     
     time_mapping = {
         'h': 3600,      # час
-        'd': -2,     # день
+        'd': -2,        # день (специальное значение CIAN API)
         'w': 604800     # неделя
     }
     return time_mapping.get(time_period, 604800)  # по умолчанию неделя
@@ -638,7 +650,8 @@ async def process_single_metro_station(
     station_cian_id: int,
     property_type: int, 
     time_period: int, 
-    max_pages: int
+    max_pages: int,
+    proxy: str = PROXY
 ) -> List[Dict]:
     """
     Обрабатывает одну станцию метро: парсит страницы поиска и извлекает объявления
@@ -664,8 +677,8 @@ async def process_single_metro_station(
             
             # Получаем страницу
             session = requests.Session()
-            if PROXY:
-                session.proxies = {'http': PROXY, 'https': PROXY}
+            if proxy:
+                session.proxies = {'http': proxy, 'https': proxy}
             
             response = session.get(page_url, headers=HEADERS, timeout=30)
             response.raise_for_status()
@@ -749,7 +762,7 @@ async def process_single_metro_station(
     print(f"🏁 Завершен парсинг станции {station_name}. Всего объявлений: {len(all_cards)}")
     return all_cards
 
-async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_period: int = TIME_PERIOD, max_pages: int = MAX_PAGES, metro_id: int = METRO_ID, foot_min: int = FOOT_MIN) -> List[Dict]:
+async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_period: int = TIME_PERIOD, max_pages: int = MAX_PAGES, metro_id: int = METRO_ID, foot_min: int = FOOT_MIN, proxy: str = PROXY) -> List[Dict]:
     """Получает объявления и сохраняет их в БД"""
     
     # Определяем, какие станции метро обрабатывать
@@ -818,7 +831,7 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
             # Обрабатываем объявления для этой станции
             station_cards = await process_single_metro_station(
                 search_url, station_name, station_cian_id, 
-                property_type, time_period, max_pages
+                property_type, time_period, max_pages, proxy
             )
             
             # Статистика по текущей станции
@@ -867,7 +880,7 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
         
         return await process_single_metro_station(
             search_url, f"Метро ID {metro_id}", metro_id,
-            property_type, time_period, max_pages
+            property_type, time_period, max_pages, proxy
         )
     else:
         # Фильтр по метро не применяется - парсим все объявления
@@ -889,7 +902,7 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
         
         return await process_single_metro_station(
             search_url, "Без фильтра по метро", None,
-            property_type, time_period, max_pages
+            property_type, time_period, max_pages, proxy
         )
 
 def print_summary(cards: List[Dict]):
@@ -911,20 +924,26 @@ def print_summary(cards: List[Dict]):
 
 async def main():
     """Основная функция"""
-    print("ПАРСЕР CIAN -> БД")
-    print(f"Прокси: {'включен' if PROXY else 'выключен'}")
-    
     args = parse_arguments()
     
     # Определяем параметры из аргументов командной строки или используем значения по умолчанию
     property_type, time_period = parse_params_string(args.params)
     time_period_seconds = convert_time_period(time_period)
     
+    # Определяем использование прокси
+    use_proxy = PROXY
+    if args.no_proxy:
+        use_proxy = None
+    elif args.proxy:
+        use_proxy = PROXY
+    
+    print("ПАРСЕР CIAN -> БД")
+    print(f"Прокси: {'включен' if use_proxy else 'выключен'}")
     print(f"Тип недвижимости: {'вторичка' if property_type == 1 else 'новостройки'}")
     if time_period_seconds is None:
         print("Период времени: без ограничений")
     else:
-        period_names = {3600: 'час', 86400: 'день', 604800: 'неделя'}
+        period_names = {3600: 'час', -2: 'день', 604800: 'неделя'}
         print(f"Период времени: {period_names.get(time_period_seconds, str(time_period_seconds))}")
 
     # Создаем таблицы БД если их нет
@@ -935,7 +954,8 @@ async def main():
         time_period=time_period_seconds,
         max_pages=MAX_PAGES,
         metro_id=METRO_ID,
-        foot_min=FOOT_MIN
+        foot_min=FOOT_MIN,
+        proxy=use_proxy
     )
     print_summary(cards)
     
