@@ -108,7 +108,7 @@ def convert_time_period(time_period: str) -> int:
     
     time_mapping = {
         'h': 3600,      # час
-        'd': 86400,     # день
+        'd': -2,     # день
         'w': 604800     # неделя
     }
     return time_mapping.get(time_period, 604800)  # по умолчанию неделя

@@ -11,6 +11,8 @@ import random
 import json
 import re
 import time
+import base64
+import gzip
 from bs4 import BeautifulSoup
 
 from parse_avito_to_db import build_page_url, parse_avito_card, build_headers
@@ -29,6 +31,9 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0"
 ]
+
+# ==== Настройки парсинга ====
+MAX_CARDS_TO_PARSE = 2  # Максимальное количество карточек для парсинга
 
 # ==== Внутренние счётчики ====
 _request_count = 0
@@ -56,6 +61,61 @@ def rotate_cookies(session):
     session.cookies.clear()
     # Иногда можно положить случайный набор тестовых кук
     # session.cookies.set("some_cookie", str(random.randint(1,10000)))
+
+def generate_search_context() -> str:
+    """Генерирует простой context для каждого запроса"""
+    # Простой context без внешних зависимостей
+    
+    # Создаем простую структуру данных
+    context_data = {
+        "fromPage": "catalog",
+        "timestamp": random.randint(1000000000, 9999999999),
+        "sessionId": random.randint(100000, 999999)
+    }
+    
+    try:
+        # Конвертируем в JSON
+        json_str = json.dumps(context_data, separators=(',', ':'))
+        
+        # Сжимаем gzip
+        compressed = gzip.compress(json_str.encode('utf-8'))
+        
+        # Кодируем в base64
+        encoded = base64.b64encode(compressed).decode('utf-8')
+        
+        # Добавляем префикс Avito
+        return f"H4sIAAAAAAAA_{encoded}"
+        
+    except Exception as e:
+        print(f"[CONTEXT] Ошибка генерации: {e}")
+        # Fallback context
+        return "H4sIAAAAAAAA_wE-AMH_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
+
+def clean_url_path(url_path: str) -> str:
+    """Очищает URL от всех параметров, оставляя только путь"""
+    if not url_path:
+        return ""
+    
+    # Убираем все параметры после ? (включая context)
+    if "?" in url_path:
+        url_path = url_path.split("?")[0]
+    
+    return url_path
+
+def build_full_url(url_path: str, add_context: bool = True) -> str:
+    """Строит полный URL с или без context"""
+    if not url_path:
+        return ""
+    
+    # Сначала очищаем от всех параметров
+    clean_path = clean_url_path(url_path)
+    base_url = f"https://www.avito.ru{clean_path}"
+    
+    if add_context:
+        context = generate_search_context()
+        return f"{base_url}?context={context}"
+    
+    return base_url
 
 # ==== Основная безопасная функция ====
 def safe_get(session, url):
@@ -117,7 +177,7 @@ def extract_json_data(html_content):
 
 
 def clean_seller_name(seller_text):
-    """Очищает название продавца от рекламных фраз и лишнего текста, сохраняя даты"""
+    """Очищает название продавца от рекламных фраз"""
     if not seller_text:
         return None
     
@@ -139,46 +199,10 @@ def clean_seller_name(seller_text):
     for phrase in ad_phrases:
         cleaned = re.sub(phrase, '', cleaned, flags=re.IGNORECASE)
     
-    # НЕ убираем даты - они нужны для времени публикации
-    # Даты будут извлечены отдельно в time_info
-    
-    # Убираем короткие слова-мусор
-    noise_words = [
-        r'\bнет\b',
-        r'\bда\b', 
-        r'\bесть\b',
-        r'\bвсе\b',
-        r'\bновый\b',
-        r'\bстарый\b',
-        r'\bбольшой\b',
-        r'\bмаленький\b',
-        r'\bхороший\b',
-        r'\bплохой\b',
-        r'\bбыстрый\b',
-        r'\bмедленный\b'
-    ]
-    
-    for word in noise_words:
-        cleaned = re.sub(word, '', cleaned, flags=re.IGNORECASE)
-    
-    # Убираем лишние пробелы и символы
+    # Убираем лишние пробелы
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-    cleaned = re.sub(r'^[^\wа-яё]+', '', cleaned)  # убираем символы в начале
-    cleaned = re.sub(r'[^\wа-яё\s]+$', '', cleaned)  # убираем символы в конце
     
-    # Убираем повторяющиеся слова
-    words = cleaned.split()
-    unique_words = []
-    for word in words:
-        if word.lower() not in [w.lower() for w in unique_words]:
-            unique_words.append(word)
-    cleaned = ' '.join(unique_words)
-    
-    # Если после очистки остался только рекламный текст, возвращаем None
-    if len(cleaned) < 2 or cleaned.lower() in ['звоните', 'готовы', 'ответить', 'вопросы']:
-        return None
-    
-    return cleaned
+    return cleaned if len(cleaned) > 2 else None
 
 
 def parse_card_detailed(card):
@@ -238,106 +262,38 @@ def parse_card_detailed(card):
                 css_classes['title'] = title_elem.get_text(strip=True)
     results['css_classes_data'] = css_classes
     
-    # 7. Поиск информации о продавце в разных местах
+    # 7. Поиск информации о продавце и времени создания
     seller_info = {}
     
-    # Ищем в labels (как в вашем примере)
+    # Ищем в labels
     labels = []
     label_elements = card.find_all(class_=re.compile(r'label|badge|tag'))
     for elem in label_elements:
         text = elem.get_text(strip=True)
         if text:
             labels.append(text)
-            # Определяем тип продавца по меткам
-            if text == "Реквизиты проверены":
-                seller_info['type'] = 'agency'
-                seller_info['verified_type'] = 'company'
-            elif text == "Документы проверены":
-                seller_info['type'] = 'agent'
-                seller_info['verified_type'] = 'agent'
-            elif 'проверено в росреестре' in text.lower():
-                seller_info['type'] = 'owner'
-                seller_info['verified_type'] = 'rosreestr'
-            # Дополнительные проверки
-            elif 'агентство' in text.lower() or 'агент' in text.lower():
-                seller_info['type'] = 'agency'
-            elif 'собственник' in text.lower() or 'владелец' in text.lower():
-                seller_info['type'] = 'owner'
     
-    # Дополнительная проверка: если в labels есть "Собственник", то продавец - собственник
-    if any('собственник' in label.lower() for label in labels):
-        seller_info['type'] = 'owner'
-        seller_info['from_labels_check'] = 'Собственник найден в labels'
-    
-    # Ищем продавца перед фразами о завершенных объявлениях
+    # Ищем время создания и название агентства
     card_text = card.get_text()
-    seller_patterns = [
-        r'([^.]*?)\s*(?:нет завершенных объявлений|нет завершённых объявлений)',
-        r'([^.]*?)\s*(\d+)\s*завершенных объявлений',
-        r'([^.]*?)\s*(\d+)\s*завершённых объявлений',
-        r'([^.]*?)\s*завершенных объявлений',
-        r'([^.]*?)\s*завершённых объявлений'
-    ]
     
-    for pattern in seller_patterns:
-        match = re.search(pattern, card_text, re.IGNORECASE | re.DOTALL)
-        if match:
-            seller_text = match.group(1).strip()
-            if seller_text and len(seller_text) > 3:  # фильтруем слишком короткие совпадения
-                seller_info['from_completed_ads'] = seller_text
-                # Пытаемся определить тип продавца из текста
-                if any(word in seller_text.lower() for word in ['агентство', 'агент', 'риэлтор']):
-                    seller_info['type'] = 'agency'
-                elif any(word in seller_text.lower() for word in ['собственник', 'владелец', 'хозяин']):
-                    seller_info['type'] = 'owner'
-                break
+    # Паттерн: "1 неделю назадPEOPLE - агентство элитной недвижимости2556 завершённых объявлений"
+    time_seller_pattern = r'(\d+\s*(?:час|часа|часов|день|дня|дней|неделя|недели|недель|месяц|месяца|месяцев)\s*назад)\s*([^0-9\n]+?)(?=\d+\s*завершённых|\d+\s*завершенных)'
     
-    # Дополнительный поиск продавца в разных местах
-    # Ищем имя продавца после времени размещения
-    time_seller_patterns = [
-        r'(\d+\s*(?:час|часа|часов|день|дня|дней|неделя|недели|недель|месяц|месяца|месяцев)\s*назад)\s*([^.\n]+?)(?:\n|\.|$|завершённых|завершенных)',
-        r'(\d+\s*(?:час|часа|часов|день|дня|дней|неделя|недели|недель|месяц|месяца|месяцев)\s*назад)\s*([^.\n]+?)(?=\d+\s*завершённых|\d+\s*завершенных)',
-    ]
+    match = re.search(time_seller_pattern, card_text, re.IGNORECASE | re.DOTALL)
+    if match:
+        time_created = match.group(1).strip()
+        seller_name = match.group(2).strip()
+        
+        # Очищаем название продавца
+        cleaned_seller = clean_seller_name(seller_name)
+        if cleaned_seller:
+            seller_info['time_created'] = time_created
+            seller_info['seller_name'] = cleaned_seller
     
-    for pattern in time_seller_patterns:
-        match = re.search(pattern, card_text, re.IGNORECASE | re.DOTALL)
-        if match:
-            seller_text = match.group(2).strip()
-            if seller_text and len(seller_text) > 2:
-                # Очищаем от рекламных фраз и оставляем только название компании
-                cleaned_seller = clean_seller_name(seller_text)
-                if cleaned_seller:
-                    seller_info['from_time_pattern'] = cleaned_seller
-                    # Определяем тип по ключевым словам
-                    if any(word in cleaned_seller.lower() for word in ['агентство', 'агент', 'риэлтор', 'real estate', 'недвижимость']):
-                        seller_info['type'] = 'agency'
-                    elif any(word in cleaned_seller.lower() for word in ['собственник', 'владелец', 'хозяин', 'артур', 'иван', 'мария']):
-                        seller_info['type'] = 'owner'
-                break
+
     
-    # Ищем продавца в конце описания (перед завершенными объявлениями)
-    end_seller_patterns = [
-        r'([^.\n]+?)\s*\n\s*(\d+)\s*завершённых объявлений',
-        r'([^.\n]+?)\s*\n\s*(\d+)\s*завершенных объявлений',
-        r'([^.\n]+?)\s*(\d+)\s*завершённых объявлений',
-        r'([^.\n]+?)\s*(\d+)\s*завершенных объявлений'
-    ]
-    
-    for pattern in end_seller_patterns:
-        match = re.search(pattern, card_text, re.IGNORECASE | re.DOTALL)
-        if match:
-            seller_text = match.group(1).strip()
-            if seller_text and len(seller_text) > 2:
-                # Очищаем от рекламных фраз и оставляем только название компании
-                cleaned_seller = clean_seller_name(seller_text)
-                if cleaned_seller:
-                    seller_info['from_end_pattern'] = cleaned_seller
-                    # Определяем тип по ключевым словам
-                    if any(word in cleaned_seller.lower() for word in ['агентство', 'агент', 'риэлтор', 'real estate', 'недвижимость']):
-                        seller_info['type'] = 'agency'
-                    elif any(word in cleaned_seller.lower() for word in ['собственник', 'владелец', 'хозяин']):
-                        seller_info['type'] = 'owner'
-                break
+
+
     
     # Ищем в бейджах и специальных элементах
     badge_elements = card.find_all(class_=re.compile(r'badge|label|tag|seller|owner'))
@@ -466,7 +422,7 @@ def parse_card_detailed(card):
                     time_info['full_date'] = f"{match.group(1)} {match.group(2)} {match.group(3)}:{match.group(4)}"
                 elif len(match.groups()) == 3:  # день месяц час
                     time_info['full_date'] = f"{match.group(1)} {match.group(2)} {match.group(3)}"
-            elif '\.' in pattern:  # формат DD.MM.YYYY
+            elif '.' in pattern:  # формат DD.MM.YYYY
                 if len(match.groups()) == 3:
                     time_info['date_format'] = f"{match.group(1)}.{match.group(2)}.{match.group(3)}"
             break
@@ -489,6 +445,10 @@ async def main():
     proxy_status = "С ПРОКСИ" if USE_PROXY else "БЕЗ ПРОКСИ"
     print(f"[SAFETY] Используем защиту от бана: {proxy_status}, случайные задержки, ротация User-Agent")
     
+    # Генерируем новый контекст для каждого запроса страницы
+    page_context = generate_search_context()
+    print(f"[CONTEXT] Сгенерирован context для страницы: {page_context[:50]}...")
+    
     # Используем безопасную загрузку
     resp = safe_get(sess, url)
     print(f"HTTP: {resp.status_code}")
@@ -509,40 +469,81 @@ async def main():
             print(str(data)[:200] + "...")
 
     soup = BeautifulSoup(resp.text, 'html.parser')
-    cards = soup.select('[data-marker="item"]') or soup.select('div.iva-item-content-\w+')
-    cards = cards[:1]  # ограничиваем до 1 карточки для безопасности
-    print(f"\nНайдено карточек: {len(cards)}")
+    cards = soup.select('[data-marker="item"]') or soup.select('div.iva-item-content-\\w+')
+    cards = cards[:MAX_CARDS_TO_PARSE]  # ограничиваем согласно настройке
+    print(f"\nНайдено карточек: {len(cards)} (ограничение: {MAX_CARDS_TO_PARSE})")
 
     if not cards:
         print("Карточки не найдены!")
         return
 
-    # Детальный анализ одной карточки
+    # Детальный анализ карточек
     print("\n" + "="*80)
-    print("ДЕТАЛЬНЫЙ АНАЛИЗ КАРТОЧКИ")
+    print(f"ДЕТАЛЬНЫЙ АНАЛИЗ КАРТОЧЕК (всего: {len(cards)})")
     print("="*80)
     
-    card = cards[0]
-    detailed_results = parse_card_detailed(card)
-    
-    for method, result in detailed_results.items():
-        print(f"\n--- {method.upper()} ---")
-        if isinstance(result, dict):
-            for key, value in result.items():
-                if isinstance(value, (dict, list)):
-                    print(f"{key}: {json.dumps(value, indent=2, ensure_ascii=False)[:300]}...")
-                else:
-                    print(f"{key}: {value}")
-        else:
-            print(result)
+    for i, card in enumerate(cards, 1):
+        print(f"\n{'='*60}")
+        print(f"КАРТОЧКА #{i} из {len(cards)}")
+        print(f"{'='*60}")
+        
+        detailed_results = parse_card_detailed(card)
+        
+        # Упрощенный вывод только важной информации
+        print(f"\n--- ОСНОВНАЯ ИНФОРМАЦИЯ ---")
+        
+        # HTML парсинг
+        if 'html_parsing' in detailed_results and detailed_results['html_parsing']:
+            html_data = detailed_results['html_parsing']
+            print(f"ID: {html_data.get('offer_id', 'N/A')}")
+            print(f"Название: {html_data.get('title', 'N/A')}")
+            print(f"Цена: {html_data.get('price', 'N/A')}")
+            print(f"Адрес: {html_data.get('address', 'N/A')}")
+        
+        # Информация о продавце
+        if 'seller_from_labels' in detailed_results:
+            seller_data = detailed_results['seller_from_labels']
+            if seller_data.get('time_created'):
+                print(f"Время создания: {seller_data['time_created']}")
+            if seller_data.get('seller_name'):
+                print(f"Продавец: {seller_data['seller_name']}")
+            if seller_data.get('type'):
+                print(f"Тип: {seller_data['type']}")
+        
+        # Метро
+        if 'metro_info' in detailed_results and detailed_results['metro_info'].get('walk_minutes'):
+            print(f"До метро: {detailed_results['metro_info']['walk_minutes']} мин")
+        
+        # Фото
+        if 'photo_info' in detailed_results and detailed_results['photo_info'].get('count'):
+            print(f"Фото: {detailed_results['photo_info']['count']}")
+        
+        # Цена за м²
+        if 'price_per_m2_info' in detailed_results and detailed_results['price_per_m2_info'].get('price_per_m2'):
+            print(f"Цена за м²: {detailed_results['price_per_m2_info']['price_per_m2']} ₽")
 
-    # Сохраняем в БД если есть данные
-    if 'html_parsing' in detailed_results and detailed_results['html_parsing']:
-        data = detailed_results['html_parsing']
-        if data.get('URL') and data.get('offer_id'):
-            print(f"\nСохраняем в БД...")
-            await save_avito_ad(data)
-            print("Сохранено!")
+        # Сохраняем в БД если есть данные
+        if 'html_parsing' in detailed_results and detailed_results['html_parsing']:
+            data = detailed_results['html_parsing']
+            if data.get('URL') and data.get('offer_id'):
+                # Генерируем новый контекст для каждого объявления
+                original_url = data['URL']
+                url_with_context = build_full_url(original_url, add_context=True)
+                url_clean = build_full_url(original_url, add_context=False)
+                
+                print(f"\n--- ГЕНЕРАЦИЯ CONTEXT ---")
+                print(f"URL оригинальный: {original_url}")
+                print(f"URL с context: {url_with_context}")
+                print(f"URL без context: {url_clean}")
+                
+                # Обновляем URL в данных
+                data['URL'] = url_with_context
+                data['URL_clean'] = url_clean
+                data['context'] = url_with_context.split('context=')[1] if 'context=' in url_with_context else 'N/A'
+                
+                print(f"\nСохраняем в БД...")
+                await save_avito_ad(data)
+                print("Сохранено!")
     
     print(f"\n{'='*80}")
     print("АНАЛИЗ ЗАВЕРШЕН")
