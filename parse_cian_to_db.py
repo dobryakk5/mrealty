@@ -569,26 +569,41 @@ def parse_offer_card(card):
                     
                     all_geo_elements.append(text)
         
+        # Проверяем на "область" ДО поиска района
+        is_region = False
+        if all_geo_elements:
+            exclude_words = ["Новомосковский", "НАО", "ТАО", "область"]
+            for geo_item in all_geo_elements:
+                geo_str = str(geo_item).lower()
+                if any(word.lower() in geo_str for word in exclude_words):
+                    is_region = True
+                    break
+        
         # Теперь анализируем собранные элементы
         if all_geo_elements:
-            # Ищем район
-            district_index = -1
-            district_text = None
-            
-            for i, text in enumerate(all_geo_elements):
-                text_lower = text.lower()
-                has_district = bool(re.search(r'\bр-?н\b|\bрайон\b|\bр-он\b|\bр\.н\.\b', text_lower))
-                if has_district:
-                    district_index = i
-                    district_text = text
-                    break
-            
-            if district_index >= 0:
-                # Район найден - удаляем предыдущие части, последующие идут в address
-                geo = [district_text] + all_geo_elements[district_index+1:]
-            else:
-                # Района нет - все элементы идут в address
+            if is_region:
+                # Карточка из области - не ищем район, сохраняем адрес как есть
                 geo = all_geo_elements
+                out['district_id'] = -1  # Признак карточки из области
+            else:
+                # Ищем район только для московских карточек
+                district_index = -1
+                district_text = None
+                
+                for i, text in enumerate(all_geo_elements):
+                    text_lower = text.lower()
+                    has_district = bool(re.search(r'\bр-?н\b|\bрайон\b|\bр-он\b|\bр\.н\.\b', text_lower))
+                    if has_district:
+                        district_index = i
+                        district_text = text
+                        break
+                
+                if district_index >= 0:
+                    # Район найден - удаляем предыдущие части, последующие идут в address
+                    geo = [district_text] + all_geo_elements[district_index+1:]
+                else:
+                    # Района нет - все элементы идут в address
+                    geo = all_geo_elements
         
         out['geo_labels'] = list(dict.fromkeys(geo))
         

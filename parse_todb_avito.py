@@ -30,6 +30,7 @@ async def create_ads_avito_table() -> None:
     """Создает таблицу ads_avito для хранения объявлений с AVITO"""
     pool = await _get_avito_pool()
     async with pool.acquire() as conn:
+        # Создаем таблицу если её нет
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS ads_avito (
@@ -50,15 +51,42 @@ async def create_ads_avito_table() -> None:
                 person TEXT,
                 object_type_id SMALLINT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(avitoid)
             );
 
             CREATE INDEX IF NOT EXISTS idx_ads_avito_avitoid ON ads_avito(avitoid);
             """
         )
+        
+        # Добавляем поле updated_at если его нет
+        try:
+            await conn.execute("ALTER TABLE ads_avito ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            print("[DB] Поле updated_at добавлено в таблицу ads_avito")
+        except Exception as e:
+            if "already exists" in str(e).lower():
+                print("[DB] Поле updated_at уже существует в таблице ads_avito")
+            else:
+                print(f"[DB] Ошибка добавления поля updated_at: {e}")
 
 
-async def save_avito_ad(ad_data: Dict) -> None:
+async def convert_seller_type_to_number(seller_type):
+    """Конвертирует текстовый тип продавца в число для БД"""
+    if not seller_type:
+        return 1  # По умолчанию "частное лицо"
+    
+    seller_type_lower = str(seller_type).lower()
+    
+    if 'собственник' in seller_type_lower:
+        return 3
+    elif 'агентство' in seller_type_lower or 'агент' in seller_type_lower:
+        return 2
+    elif 'застройщик' in seller_type_lower:
+        return 4
+    else:
+        return 1  # "частное лицо" по умолчанию
+
+async def save_avito_ad(ad_data: dict) -> bool:
     """Сохраняет объявление AVITO в БД. При конфликте по avitoid — пропускает."""
     pool = await _get_avito_pool()
     async with pool.acquire() as conn:
@@ -104,35 +132,66 @@ async def save_avito_ad(ad_data: Dict) -> None:
             address = ', '.join(ad_data['geo_labels'])
 
         tags = None
-        if ad_data.get('labels'):
+        if ad_data.get('tags'):
+            tags = ad_data['tags']
+        elif ad_data.get('labels'):
             tags = ', '.join(ad_data['labels'])
 
         seller = ad_data.get('seller', {})
         person_type = None
         person = None
-        if seller.get('type'):
-            type_mapping = {
-                'owner': 'собственник',
-                'agency': 'агентство',
-                'user': 'пользователь',
-                'private': 'частное лицо',
-                'developer': 'застройщик',
-            }
-            person_type = type_mapping.get(seller['type'], seller['type'])
-        if seller.get('name'):
-            clean_name = seller['name']
-            for stop in ['Документы проверены', 'Посмотреть все объекты', 'Суперагент', '+7', 'Написать']:
-                if stop in clean_name:
-                    clean_name = clean_name.split(stop)[0].strip()
-            person = clean_name
+        
+        # ПРИОРИТЕТ: используем поле person_type из ad_data, если оно есть
+        if ad_data.get('person_type'):
+            person_type = ad_data['person_type']
+            # Конвертируем текстовый тип в число для БД
+            person_type = await convert_seller_type_to_number(person_type)
+            # print(f"[DB] Используется поле person_type из ad_data: {person_type}")
+        
+        # ПРИОРИТЕТ: используем поле person из ad_data, если оно есть
+        if ad_data.get('person'):
+            person = ad_data['person']
+            # print(f"[DB] Используется поле person из ad_data: {person}")
+        else:
+            # Fallback на старую логику
+            if seller.get('type'):
+                type_mapping = {
+                    'owner': 'собственник',
+                    'agency': 'агентство',
+                    'user': 'пользователь',
+                    'private': 'частное лицо',
+                    'developer': 'застройщик',
+                }
+                person_type = type_mapping.get(seller['type'], seller['type'])
+                # Конвертируем текстовый тип в число для БД
+                person_type = await convert_seller_type_to_number(person_type)
+            
+            # Приоритет названию агентства из тегов
+            if seller.get('agency_name'):
+                person = seller['agency_name']
+            elif seller.get('name'):
+                clean_name = seller['name']
+                for stop in ['Документы проверены', 'Посмотреть все объекты', 'Суперагент', '+7', 'Написать']:
+                    if stop in clean_name:
+                        clean_name = clean_name.split(stop)[0].strip()
+                person = clean_name
+        
+        # Если тип продавца не определен, устанавливаем "частное лицо" (1) по умолчанию
+        if person_type is None:
+            person_type = 1  # частное лицо
 
         query = (
             """
             INSERT INTO ads_avito (
                 url, avitoid, price, rooms, area, floor, total_floors,
-                complex, metro, min_metro, address, tags, person_type, person, object_type_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-            ON CONFLICT (avitoid) DO NOTHING
+                complex, metro, min_metro, address, tags, person_type, person, source_created, object_type_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ON CONFLICT (avitoid) DO UPDATE SET
+                tags = EXCLUDED.tags,
+                person_type = EXCLUDED.person_type,
+                person = EXCLUDED.person,
+                source_created = EXCLUDED.source_created,
+                updated_at = CURRENT_TIMESTAMP
             """
         )
 
@@ -152,13 +211,18 @@ async def save_avito_ad(ad_data: Dict) -> None:
             tags,
             person_type,
             person,
+            ad_data.get('source_created'),  # Добавляем время публикации
             (2 if ad_data.get('object_type_id') == 2 else 1)
         )
 
+        # Проверяем результат операции
         if "INSERT 0 1" in result:
-            print(f"[DB] Добавлено объявление AVITO {avitoid}: {ad_data.get('URL')}")
+            pass  # Убираем лог
+        elif "UPDATE 1" in result:
+            pass  # Убираем лог
         else:
-            print(f"[DB] Пропущено (дубликат) AVITO {avitoid}: {ad_data.get('URL')}")
+            pass  # Убираем лог
+        return True
 
 
 async def create_avito_api_table() -> None:

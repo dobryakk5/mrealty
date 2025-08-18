@@ -52,11 +52,13 @@ async def create_ads_cian_table() -> None:
                 person TEXT,
                 object_type_id SMALLINT,
                 source_created TIMESTAMP NULL,
+                processed BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(avitoid)
             );
             
             CREATE INDEX IF NOT EXISTS idx_ads_cian_avitoid ON ads_cian(avitoid);
+            CREATE INDEX IF NOT EXISTS idx_ads_cian_processed ON ads_cian(processed);
             
             """)
             print("[DB] Таблица ads_cian создана успешно")
@@ -82,11 +84,47 @@ async def create_ads_cian_table() -> None:
             CREATE INDEX IF NOT EXISTS idx_parsing_progress_no_time ON system.parsing_progress(property_type, time_upd DESC) WHERE time_period IS NULL;
             """)
             print("[DB] Таблица system.parsing_progress создана успешно")
+            
+            # Мигрируем существующие записи, помечая как обработанные те, что содержат исключаемые слова
+            try:
+                await migrate_existing_processed_records()
+            except Exception as e:
+                print(f"[DB] Предупреждение: не удалось выполнить миграцию существующих записей: {e}")
                 
         except Exception as e:
             print(f"[DB] Ошибка создания таблицы ads_cian: {e}")
             raise
 
+
+def _should_mark_as_processed(address: str, geo_labels: list = None) -> bool:
+    """
+    ФУНКЦИЯ НЕ ИСПОЛЬЗУЕТСЯ: Логика упрощена
+    
+    Старая логика: проверяла слова "область", "НАО" и т.д. для московских карточек
+    Новая логика: 
+    - Карточки из области (district_id = -1) → processed = TRUE
+    - Московские карточки → processed = FALSE (всегда обрабатываем)
+    """
+    # Слова, при наличии которых объявление помечается как обработанное
+    exclude_words = ["Новомосковский", "НАО", "ТАО", "область"]
+    
+    # Проверяем адрес
+    if address:
+        address_lower = address.lower()
+        for word in exclude_words:
+            if word.lower() in address_lower:
+                return True
+    
+    # Проверяем geo_labels
+    if geo_labels:
+        for geo_item in geo_labels:
+            if geo_item:
+                geo_str = str(geo_item).lower()
+                for word in exclude_words:
+                    if word.lower() in geo_str:
+                        return True
+    
+    return False
 
 async def save_cian_ad(ad_data: Dict) -> bool:
     """Сохраняет объявление CIAN в БД. Возвращает True, если добавлено, False если дубликат."""
@@ -146,70 +184,78 @@ async def save_cian_ad(ad_data: Dict) -> bool:
             address = None
             district_id = None
             
-            if ad_data.get('geo_labels'):
-                # Фильтруем элементы, исключая метро
-                metro_stop_words = ['м.', 'м ', 'метро', 'станция', 'станции']
-                filtered_geo = []
-                
-                for geo_item in ad_data['geo_labels']:
-                    geo_str = str(geo_item).strip()
-                    if geo_str:
-                        # Проверяем, не содержит ли элемент метро
-                        geo_lower = geo_str.lower()
-                        is_metro = any(stop_word in geo_lower for stop_word in metro_stop_words)
-                        
-                        if not is_metro:
-                            filtered_geo.append(geo_str)
-                
-                if filtered_geo:
-                    # Ищем элемент с районом
-                    district_item = None
-                    address_items = []
+            # Проверяем, не является ли карточка из области (district_id = -1)
+            if ad_data.get('district_id') == -1:
+                # Карточка из области - сохраняем адрес как есть
+                if ad_data.get('geo_labels'):
+                    address = ', '.join(ad_data['geo_labels'])
+                district_id = -1
+            else:
+                # Обычная московская карточка - применяем стандартную логику
+                if ad_data.get('geo_labels'):
+                    # Фильтруем элементы, исключая метро
+                    metro_stop_words = ['м.', 'м ', 'метро', 'станция', 'станции']
+                    filtered_geo = []
                     
-                    # Обрабатываем элементы по порядку
-                    district_found = False
-                    for i, item in enumerate(filtered_geo):
-                        # Если район уже найден, все последующие элементы идут в address
-                        if district_found:
-                            address_items.append(item)
-                            continue
-                        
-                        # Проверяем, является ли элемент районом
-                        district_patterns = [
-                            r'\bр-?н\b',           # р-н, рн
-                            r'\bрайон\b',          # район
-                            r'\bр-он\b',           # р-он
-                            r'\bр\.н\.\b',         # р.н.
-                        ]
-                        
-                        is_district = False
-                        for pattern in district_patterns:
-                            if re.search(pattern, item, re.IGNORECASE):
-                                is_district = True
-                                # Убираем все варианты написания района
-                                cleaned_item = re.sub(r'\bр-?н\b|\bрайон\b|\bр-он\b|\bр\.н\.\b', '', item, flags=re.IGNORECASE).strip()
-                                district_item = cleaned_item
-                                district_found = True
-                                break
-                        
-                        if is_district:
-                            # Найден район - не добавляем в адрес
-                            pass
-                        else:
-                            # Не район - добавляем в адрес
-                            address_items.append(item)
+                    for geo_item in ad_data['geo_labels']:
+                        geo_str = str(geo_item).strip()
+                        if geo_str:
+                            # Проверяем, не содержит ли элемент метро
+                            geo_lower = geo_str.lower()
+                            is_metro = any(stop_word in geo_lower for stop_word in metro_stop_words)
+                            
+                            if not is_metro:
+                                filtered_geo.append(geo_str)
                     
-                    # Формируем адрес и ищем district_id
-                    if district_item:
-                        # Ищем district_id по названию района
-                        district_id = await conn.fetchval("""
-                            SELECT id FROM districts 
-                            WHERE LOWER(name) = LOWER($1)
-                            LIMIT 1
-                        """, district_item)
-                    
-                    if address_items:
-                        address = ', '.join(address_items)
+                    if filtered_geo:
+                        # Ищем элемент с районом
+                        district_item = None
+                        address_items = []
+                        
+                        # Обрабатываем элементы по порядку
+                        district_found = False
+                        for i, item in enumerate(filtered_geo):
+                            # Если район уже найден, все последующие элементы идут в address
+                            if district_found:
+                                address_items.append(item)
+                                continue
+                            
+                            # Проверяем, является ли элемент районом
+                            district_patterns = [
+                                r'\bр-?н\b',           # р-н, рн
+                                r'\bрайон\b',          # район
+                                r'\bр-он\b',           # р-он
+                                r'\bр\.н\.\b',         # р.н.
+                            ]
+                            
+                            is_district = False
+                            for pattern in district_patterns:
+                                if re.search(pattern, item, re.IGNORECASE):
+                                    is_district = True
+                                    # Убираем все варианты написания района
+                                    cleaned_item = re.sub(r'\bр-?н\b|\bрайон\b|\bр-он\b|\bр\.н\.\b', '', item, flags=re.IGNORECASE).strip()
+                                    district_item = cleaned_item
+                                    district_found = True
+                                    break
+                            
+                            if is_district:
+                                # Найден район - не добавляем в адрес
+                                pass
+                            else:
+                                # Не район - добавляем в адрес
+                                address_items.append(item)
+                        
+                        # Формируем адрес и ищем district_id
+                        if district_item:
+                            # Ищем district_id по названию района
+                            district_id = await conn.fetchval("""
+                                SELECT id FROM districts 
+                                WHERE LOWER(name) = LOWER($1)
+                                LIMIT 1
+                            """, district_item)
+                        
+                        if address_items:
+                            address = ', '.join(address_items)
 
             # Метки
             tags = None
@@ -240,13 +286,22 @@ async def save_cian_ad(ad_data: Dict) -> bool:
                         clean_name = clean_name.split(stop_word)[0].strip()
                 person = clean_name
 
+            # Определяем, нужно ли пометить объявление как обработанное
+            if district_id == -1:
+                # Карточка из области - сразу помечаем как обработанную
+                should_mark_processed = True
+            else:
+                # Обычная московская карточка - всегда помечаем как необработанную
+                should_mark_processed = False
+            
             # Вставляем данные
             query = """
             INSERT INTO ads_cian (
                 url, avitoid, price, rooms, area, floor, total_floors, 
-                complex, metro_id, min_metro, address, district_id, tags, person_type, person, object_type_id, source_created
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-            ON CONFLICT (avitoid) DO NOTHING
+                complex, metro_id, min_metro, address, district_id, tags, person_type, person, object_type_id, source_created, processed
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            ON CONFLICT (avitoid) DO UPDATE SET
+                processed = EXCLUDED.processed
             """
             
             # Нормализуем source_created (ожидается datetime для TIMESTAMP)
@@ -284,7 +339,8 @@ async def save_cian_ad(ad_data: Dict) -> bool:
                 person_type,
                 person,
                 (1 if ad_data.get('property_type') == 2 else 2 if ad_data.get('property_type') == 1 else None),  # 2=новостройка→1, 1=вторичка→2, не указан→NULL
-                created_value
+                created_value,
+                should_mark_processed
             )
             
             # Проверяем, была ли запись добавлена
@@ -292,6 +348,7 @@ async def save_cian_ad(ad_data: Dict) -> bool:
                 print(f"[DB] Добавлено объявление {avitoid}: {ad_data.get('URL')}")
                 return True
             else:
+                # Запись уже существует - не обновляем поле processed
                 print(f"[DB] Пропущено (дубликат) объявление {avitoid}: {ad_data.get('URL')}")
                 return False
             
@@ -553,17 +610,87 @@ async def get_last_parsing_progress(property_type: int, time_period: int = None)
             return None
 
 async def get_all_metro_stations() -> list:
-    """Получает все станции метро из БД для обработки"""
+    """Получает все московские станции метро из БД для обработки (is_msk IS NOT FALSE)"""
     try:
         pool = await _get_cian_pool()
         async with pool.acquire() as conn:
             stations = await conn.fetch("""
                 SELECT id, name, cian_id
                 FROM metro
-                WHERE cian_id IS NOT NULL
+                WHERE is_msk IS NOT FALSE
                 ORDER BY id
             """)
             return [dict(station) for station in stations]
     except Exception as e:
         print(f"❌ Ошибка получения станций метро: {e}")
         return []
+
+async def migrate_existing_processed_records():
+    """
+    ФУНКЦИЯ ОТКЛЮЧЕНА: Миграция существующих записей не выполняется
+    Логика обработки адресов с "область" и "НАО" теперь работает на этапе парсинга:
+    карточки из области получают district_id = -1 и автоматически processed = TRUE
+    """
+    print("[MIGRATION] Функция миграции отключена - обработка только для новых записей")
+    return 0
+
+async def get_unprocessed_cian_ads(limit: int = None) -> list:
+    """
+    Получает необработанные объявления CIAN (processed = FALSE)
+    
+    Args:
+        limit: Максимальное количество записей для получения
+        
+    Returns:
+        Список необработанных объявлений
+    """
+    pool = await _get_cian_pool()
+    async with pool.acquire() as conn:
+        try:
+            query = """
+                SELECT * FROM ads_cian 
+                WHERE processed = FALSE 
+                ORDER BY created_at DESC
+            """
+            
+            if limit:
+                query += f" LIMIT {limit}"
+            
+            records = await conn.fetch(query)
+            return [dict(record) for record in records]
+            
+        except Exception as e:
+            print(f"[DB] Ошибка получения необработанных объявлений: {e}")
+            return []
+
+async def get_cian_ads_processing_stats() -> dict:
+    """
+    Получает статистику по обработке объявлений CIAN
+    
+    Returns:
+        Словарь со статистикой
+    """
+    pool = await _get_cian_pool()
+    async with pool.acquire() as conn:
+        try:
+            stats = await conn.fetchrow("""
+                SELECT 
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE processed = TRUE) as processed,
+                    COUNT(*) FILTER (WHERE processed = FALSE) as unprocessed
+                FROM ads_cian
+            """)
+            
+            if stats:
+                return {
+                    'total': stats['total'],
+                    'processed': stats['processed'],
+                    'unprocessed': stats['unprocessed'],
+                    'processed_percentage': round((stats['processed'] / stats['total'] * 100), 2) if stats['total'] > 0 else 0
+                }
+            else:
+                return {'total': 0, 'processed': 0, 'unprocessed': 0, 'processed_percentage': 0}
+                
+        except Exception as e:
+            print(f"[DB] Ошибка получения статистики: {e}")
+            return {'total': 0, 'processed': 0, 'unprocessed': 0, 'processed_percentage': 0}
