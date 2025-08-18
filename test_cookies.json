@@ -1,0 +1,10 @@
+{
+  "created_at": "2025-08-14 22:45:00",
+  "cookies": [
+    {
+      "name": "test_cookie",
+      "value": "test_value",
+      "domain": ".avito.ru"
+    }
+  ]
+}
