@@ -8,6 +8,7 @@ import re
 import asyncpg
 from typing import Dict
 from dotenv import load_dotenv
+from datetime import datetime, date
 
 # Load environment
 load_dotenv()
@@ -44,6 +45,7 @@ async def create_ads_avito_table() -> None:
                 total_floors SMALLINT,
                 complex TEXT,
                 metro TEXT,
+                metro_id INTEGER, -- ID метро из таблицы metro
                 min_metro SMALLINT,
                 address TEXT,
                 tags TEXT,
@@ -56,6 +58,7 @@ async def create_ads_avito_table() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_ads_avito_avitoid ON ads_avito(avitoid);
+            CREATE INDEX IF NOT EXISTS idx_ads_avito_metro_id ON ads_avito(metro_id);
             """
         )
         
@@ -68,6 +71,16 @@ async def create_ads_avito_table() -> None:
                 print("[DB] Поле updated_at уже существует в таблице ads_avito")
             else:
                 print(f"[DB] Ошибка добавления поля updated_at: {e}")
+        
+        # Добавляем поле metro_id если его нет
+        try:
+            await conn.execute("ALTER TABLE ads_avito ADD COLUMN metro_id INTEGER")
+            print("[DB] Поле metro_id добавлено в таблицу ads_avito")
+        except Exception as e:
+            if "already exists" in str(e).lower():
+                print("[DB] Поле metro_id уже существует в таблице ads_avito")
+            else:
+                print(f"[DB] Ошибка добавления поля metro_id: {e}")
 
 
 async def convert_seller_type_to_number(seller_type):
@@ -92,12 +105,16 @@ async def save_avito_ad(ad_data: dict) -> bool:
     async with pool.acquire() as conn:
         # Парсинг данных
         avitoid = None
-        if ad_data.get('offer_id'):
+        if ad_data.get('avitoid'):
             try:
-                avitoid = int(ad_data['offer_id'])
+                avitoid = int(ad_data['avitoid'])
+                print(f"🔍 Обработка avitoid: {ad_data.get('avitoid')} -> {avitoid}")
             except (ValueError, TypeError):
+                print(f"❌ Ошибка конвертации avitoid: {ad_data.get('avitoid')}")
                 pass
-
+        else:
+            print(f"⚠️ Поле avitoid не найдено в ad_data. Доступные поля: {list(ad_data.keys())}")
+        
         price = ad_data.get('price')
 
         # Обработка комнат: 0, если пришла строка, не являющаяся числом
@@ -180,20 +197,44 @@ async def save_avito_ad(ad_data: dict) -> bool:
         if person_type is None:
             person_type = 1  # частное лицо
 
-        query = (
-            """
+        # Проверяем и нормализуем source_created
+        source_created = ad_data.get('source_created')
+        if source_created is None:
+            print(f"ℹ️ source_created не указан, устанавливаем текущую дату")
+            source_created = datetime.now().date()
+        elif isinstance(source_created, str):
+            print(f"⚠️ source_created передается как строка: '{source_created}', устанавливаем текущую дату")
+            source_created = datetime.now().date()
+        elif not isinstance(source_created, (datetime, date)):
+            print(f"⚠️ source_created имеет неожиданный тип: {type(source_created)}, устанавливаем текущую дату")
+            source_created = datetime.now().date()
+        
+        # SQL запрос для вставки/обновления
+        query = """
             INSERT INTO ads_avito (
-                url, avitoid, price, rooms, area, floor, total_floors,
-                complex, metro, min_metro, address, tags, person_type, person, source_created, object_type_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                url, avitoid, price, rooms, area, floor, total_floors, 
+                complex, metro, metro_id, min_metro, address, tags, 
+                person_type, person, source_created, object_type_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (avitoid) DO UPDATE SET
+                url = EXCLUDED.url,
+                price = EXCLUDED.price,
+                rooms = EXCLUDED.rooms,
+                area = EXCLUDED.area,
+                floor = EXCLUDED.floor,
+                total_floors = EXCLUDED.total_floors,
+                complex = EXCLUDED.complex,
+                metro = EXCLUDED.metro,
+                metro_id = EXCLUDED.metro_id,
+                min_metro = EXCLUDED.min_metro,
+                address = EXCLUDED.address,
                 tags = EXCLUDED.tags,
                 person_type = EXCLUDED.person_type,
                 person = EXCLUDED.person,
                 source_created = EXCLUDED.source_created,
+                object_type_id = EXCLUDED.object_type_id,
                 updated_at = CURRENT_TIMESTAMP
             """
-        )
 
         result = await conn.execute(
             query,
@@ -206,13 +247,14 @@ async def save_avito_ad(ad_data: dict) -> bool:
             ad_data.get('floor_total'),
             ad_data.get('complex'),
             metro,
+            ad_data.get('metro_id'),  # Добавляем metro_id
             min_metro,
             address,
             tags,
             person_type,
             person,
-            ad_data.get('source_created'),  # Добавляем время публикации
-            (2 if ad_data.get('object_type_id') == 2 else 1)
+            source_created,  # Добавляем время публикации
+            (2 if ad_data.get('object_type_id') == 2 else 1)  # object_type_id
         )
 
         # Проверяем результат операции
@@ -288,4 +330,3 @@ async def save_avito_api_item(data: dict) -> None:
         except Exception as e:
             print(f"[DB] Ошибка сохранения в avito_api: {e}")
             return False
-

@@ -92,22 +92,30 @@ class EnhancedMetroParser:
             now = datetime.now()
             relative_time_lower = relative_time.lower().strip()
             
+            print(f"🕐 Парсим время: '{relative_time}' -> '{relative_time_lower}'")
+            
             # Паттерны для относительного времени
             if 'сегодня' in relative_time_lower:
-                return now.date()
+                result = now.date()
+                print(f"✅ Сегодня -> {result}")
+                return result
             elif 'вчера' in relative_time_lower:
                 yesterday = now - timedelta(days=1)
-                return yesterday.date()
+                result = yesterday.date()
+                print(f"✅ Вчера -> {result}")
+                return result
             elif 'позавчера' in relative_time_lower:
                 day_before_yesterday = now - timedelta(days=2)
-                return day_before_yesterday.date()
+                result = day_before_yesterday.date()
+                print(f"✅ Позавчера -> {result}")
+                return result
             
             # Паттерны с количеством времени
             time_patterns = [
                 (r'(\d+)\s*(час|часа|часов)\s*назад', 'hours'),
                 (r'(\d+)\s*(день|дня|дней)\s*назад', 'days'),
-                (r'(\d+)\s*(недел|неделя|недели|недель)\s*назад', 'weeks'),
-                (r'(\d+)\s*(месяц|месяца|месяцев)\s*назад', 'months')
+                (r'(\d+)\s*(недел|неделя|недели|недель|неделю)\s*назад', 'weeks'),
+                (r'(\d+)\s*(месяц|месяца|месяцев|месяц)\s*назад', 'months')
             ]
             
             for pattern, unit in time_patterns:
@@ -125,7 +133,9 @@ class EnhancedMetroParser:
                         # Приблизительно, месяц = 30 дней
                         target_time = now - timedelta(days=count * 30)
                     
-                    return target_time.date()
+                    result = target_time.date()
+                    print(f"✅ {count} {unit} назад -> {result}")
+                    return result
             
             # Если это конкретная дата (например, "12 июля 13:35")
             month_names = {
@@ -149,7 +159,9 @@ class EnhancedMetroParser:
                         # Если парсится "12 января" → это январь 2025 (текущий год)
                         # НЕ добавляем год, так как объявления обычно не публикуются на год вперед
                         
-                        return datetime(year, month_num, day).date()
+                        result = datetime(year, month_num, day).date()
+                        print(f"✅ Конкретная дата {day} {month_name} -> {result}")
+                        return result
             
             # Ищем формат "12.07" или "12.07.2024"
             date_dot_patterns = [
@@ -170,20 +182,25 @@ class EnhancedMetroParser:
                         # Например: сейчас август 2025, парсится "12.07" → это июль 2025 (текущий год)
                         # НЕ добавляем год, так как объявления обычно не публикуются на год вперед
                         
-                        return datetime(year, month, day).date()
+                        result = datetime(year, month, day).date()
+                        print(f"✅ Формат DD.MM -> {result}")
+                        return result
                     
                     elif len(match.groups()) == 3:
                         # Формат "12.07.2024"
                         day = int(match.group(1))
                         month = int(match.group(2))
                         year = int(match.group(3))
-                        return datetime(year, month, day).date()
+                        result = datetime(year, month, day).date()
+                        print(f"✅ Формат DD.MM.YYYY -> {result}")
+                        return result
             
-            return None
+            print(f"⚠️ Не удалось распарсить время: '{relative_time}', возвращаем текущую дату")
+            return datetime.now().date()
             
         except Exception as e:
-            print(f"⚠️ Ошибка преобразования времени в дату: {e}")
-            return None
+            print(f"❌ Ошибка преобразования времени в дату '{relative_time}': {e}, возвращаем текущую дату")
+            return datetime.now().date()
     
     async def get_metro_avito_id(self):
         """Получает avito_id для метро из БД"""
@@ -696,6 +713,12 @@ class EnhancedMetroParser:
             # ID объявления
             db_data['avitoid'] = card_data.get('item_id', '')
             
+            # Отладочная информация для avitoid
+            if db_data['avitoid']:
+                print(f"🔍 Найден avitoid: {db_data['avitoid']}")
+            else:
+                print(f"⚠️ avitoid не найден в card_data: {card_data.get('item_id', 'НЕТ')}")
+            
             # Заголовок
             db_data['title'] = card_data.get('title', '')
             
@@ -763,6 +786,9 @@ class EnhancedMetroParser:
                 db_data['metro'] = metro_name.split(',')[0].strip()
             else:
                 db_data['metro'] = metro_name
+            
+            # ID метро из таблицы metro (добавляем для связи с таблицей metro)
+            db_data['metro_id'] = self.metro_id
             
             # Время до метро
             time_to_metro = card_data.get('time_to_metro', '')
@@ -946,12 +972,11 @@ class EnhancedMetroParser:
             if published_time and published_time != 'Не найдено':
                 # Конвертируем относительное время в дату
                 source_created = self.convert_relative_time_to_date(published_time)
-                if source_created:
-                    db_data['source_created'] = source_created
-                else:
-                    db_data['source_created'] = published_time
+                db_data['source_created'] = source_created
+                print(f"✅ Время публикации: '{published_time}' -> {source_created}")
             else:
-                db_data['source_created'] = None
+                print(f"ℹ️ Время публикации не найдено, устанавливаем текущую дату")
+                db_data['source_created'] = datetime.now().date()
             
             # Текущее время
             db_data['updated_at'] = datetime.now()
@@ -1688,8 +1713,8 @@ class EnhancedMetroParser:
                 time_patterns = [
                     r'(\d+)\s*(час|часа|часов)\s*назад',
                     r'(\d+)\s*(день|дня|дней)\s*назад',
-                    r'(\d+)\s*(недел|неделя|недели|недель)\s*назад',
-                    r'(\d+)\s*(месяц|месяца|месяцев)\s*назад',
+                    r'(\d+)\s*(недел|неделя|недели|недель|неделю)\s*назад',
+                    r'(\d+)\s*(месяц|месяца|месяцев|месяц)\s*назад',
                     r'вчера',
                     r'сегодня',
                     r'позавчера'
@@ -1737,8 +1762,8 @@ class EnhancedMetroParser:
                     time_patterns = [
                         r'(\d+)\s*(час|часа|часов)\s*назад',
                         r'(\d+)\s*(день|дня|дней)\s*назад',
-                        r'(\d+)\s*(недел|неделя|недели|недель)\s*назад',
-                        r'(\d+)\s*(месяц|месяца|месяцев)\s*назад',
+                        r'(\d+)\s*(недел|неделя|недели|недель|неделю)\s*назад',
+                        r'(\d+)\s*(месяц|месяца|месяцев|месяц)\s*назад',
                         r'вчера',
                         r'сегодня',
                         r'позавчера'
@@ -1776,7 +1801,11 @@ class EnhancedMetroParser:
                 item_id = card_element.get_attribute('data-item-id')
                 if item_id:
                     card_data['item_id'] = item_id
-            except:
+                    print(f"✅ Парсинг item_id: {item_id}")
+                else:
+                    print(f"⚠️ item_id не найден в атрибуте data-item-id")
+            except Exception as e:
+                print(f"❌ Ошибка парсинга item_id: {e}")
                 pass
             
             # Заголовок
@@ -1993,6 +2022,10 @@ class EnhancedMetroParser:
                 card_data['params'] = "Не найдено"
                 card_data['tags'] = []
             
+            # Название комплекса
+            complex_name = self.extract_complex_name(card_element, card_data.get('title', ''), card_data.get('params', ''))
+            card_data['complex_name'] = complex_name
+            
             # Описание
             try:
                 description_elem = card_element.find_element(By.CSS_SELECTOR, '[data-marker="item-description"]')
@@ -2091,10 +2124,14 @@ class EnhancedMetroParser:
                     # Подготавливаем данные для БД
                     db_data = self.prepare_data_for_db(card)
                     if db_data:
+                        # Отладочная информация для avitoid
+                        print(f"💾 Сохраняем карточку {i+1}: avitoid={db_data.get('avitoid', 'НЕТ')}")
+                        
                         # Сохраняем в БД
                         await save_avito_ad(db_data)
                         saved_count += 1
                 except Exception as e:
+                    print(f"❌ Ошибка сохранения карточки {i+1}: {e}")
                     pass
             
             return saved_count > 0
@@ -2325,6 +2362,187 @@ class EnhancedMetroParser:
                     self.driver.quit()
                 except:
                     pass
+    
+    async def parse_single_metro(self, metro_id, max_pages, max_cards=None):
+        """
+        Парсит одно метро с заданными параметрами
+        
+        Args:
+            metro_id (int): ID метро из таблицы metro
+            max_pages (int): Количество страниц для парсинга
+            max_cards (int, optional): Количество карточек на странице (0 = все карточки)
+        
+        Returns:
+            tuple: (success: bool, saved_count: int, total_cards: int)
+                - success: Успешно ли выполнен парсинг
+                - saved_count: Количество сохраненных записей в БД
+                - total_cards: Общее количество спарсенных карточек
+        """
+        try:
+            # Устанавливаем параметры для этого запуска
+            self.metro_id = metro_id
+            self.max_pages = max_pages
+            if max_cards is not None:
+                self.max_cards = max_cards
+            
+            print(f"🚀 Запуск парсинга метро ID={metro_id}, страниц={max_pages}, карточек на странице={self.max_cards}")
+            
+            # Получаем avito_id для метро
+            if not await self.get_metro_avito_id():
+                print(f"❌ Не удалось получить avito_id для метро {metro_id}")
+                return False, 0, 0
+            
+            # Загружаем cookies
+            cookies_data = self.load_cookies()
+            if not cookies_data:
+                print("❌ Не удалось загрузить cookies")
+                return False, 0, 0
+            
+            # Настраиваем Selenium
+            if not self.setup_selenium():
+                print("❌ Не удалось настроить Selenium")
+                return False, 0, 0
+            
+            # Применяем cookies
+            if not self.apply_cookies(cookies_data):
+                print("❌ Не удалось применить cookies")
+                return False, 0, 0
+            
+            # Парсим страницы
+            parsed_cards = self.parse_multiple_pages()
+            total_cards = len(parsed_cards)
+            
+            if not parsed_cards:
+                print("❌ Не удалось спарсить карточки")
+                return False, 0, 0
+            
+            # Сохраняем в БД (если включено)
+            saved_count = 0
+            if self.enable_db_save and DB_AVAILABLE:
+                print(f"💾 Сохраняем {total_cards} карточек в БД...")
+                await self.save_to_db(parsed_cards)
+                # Получаем количество сохраненных записей
+                saved_count = total_cards  # Предполагаем, что все сохранились успешно
+                print(f"✅ Сохранено в БД: {saved_count} записей")
+            else:
+                print("⚠️ Сохранение в БД отключено или недоступно")
+            
+            # Выводим итоговую статистику
+            print(f"\n📊 ИТОГОВАЯ СТАТИСТИКА:")
+            print(f"   Метро ID: {metro_id}")
+            print(f"   Метро avito_id: {self.metro_avito_id}")
+            print(f"   Страниц спарсено: {max_pages}")
+            print(f"   Карточек спарсено: {total_cards}")
+            print(f"   Сохранено в БД: {saved_count}")
+            print(f"   Metro ID в БД: {metro_id} (связь с таблицей metro)")
+            
+            return True, saved_count, total_cards
+            
+        except Exception as e:
+            print(f"❌ Ошибка парсинга метро {metro_id}: {e}")
+            return False, 0, 0
+        finally:
+            # Закрываем браузер
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+    
+    def extract_complex_name(self, card_element, title_text, params_text):
+        """Извлекает название комплекса из правильного места на странице - после тегов и перед адресом"""
+        try:
+            complex_name = ""
+            
+            # Основной метод: ищем название комплекса в правильном месте на странице
+            # Название комплекса обычно находится после тегов и перед адресом
+            try:
+                # Получаем весь текст карточки
+                all_text = card_element.text
+                lines = all_text.split('\n')
+                
+                # Ищем позиции ключевых элементов
+                tags_end_index = -1
+                address_start_index = -1
+                
+                for i, line in enumerate(lines):
+                    line_lower = line.lower().strip()
+                    
+                    # Ищем конец тегов (обычно это последний тег)
+                    if any(tag in line_lower for tag in ['собственник', 'агентство', 'документы проверены', 'реквизиты проверены', 'лифт', 'парковка', 'балкон', 'кондиционер']):
+                        tags_end_index = i
+                    
+                    # Ищем начало адреса (обычно содержит улицу, дом, метро)
+                    if self.is_address_line(line):
+                        address_start_index = i
+                        break
+                
+                # Если нашли и теги, и адрес, ищем название комплекса между ними
+                if tags_end_index != -1 and address_start_index != -1 and address_start_index > tags_end_index:
+                    # Ищем потенциальное название комплекса между тегами и адресом
+                    for i in range(tags_end_index + 1, address_start_index):
+                        line = lines[i].strip()
+                        if line and len(line) > 2:
+                            # Проверяем, что это не пустая строка и не слишком короткая
+                            # Исключаем строки, которые явно не являются названиями комплексов
+                            if not any(exclude in line.lower() for exclude in ['м²', 'эт', 'квартира', 'студия', 'собственник', 'агентство', 'документы', 'проверены', 'реквизиты', 'лифт', 'парковка', 'балкон', 'кондиционер', 'метро', 'мин']):
+                                # Это потенциальное название комплекса
+                                complex_name = line.strip()
+                                print(f"✅ Название комплекса найдено между тегами и адресом: {complex_name}")
+                                return complex_name
+                
+                # Альтернативный метод: ищем в характеристиках по структуре
+                if params_text:
+                    # Разбиваем характеристики на строки
+                    param_lines = params_text.split('\n')
+                    
+                    # Ищем строку, которая может быть названием комплекса
+                    # Обычно это строка без ключевых слов, но с текстом
+                    for line in param_lines:
+                        line = line.strip()
+                        if line and len(line) > 2:
+                            line_lower = line.lower()
+                            # Исключаем строки с явными тегами
+                            if not any(tag in line_lower for tag in ['собственник', 'агентство', 'документы', 'проверены', 'реквизиты', 'лифт', 'парковка', 'балкон', 'кондиционер', 'метро', 'мин', 'м²', 'эт']):
+                                # Проверяем, что строка содержит только буквы, цифры, пробелы и дефисы
+                                if re.match(r'^[А-Яа-яЁё\s\-\d]+$', line):
+                                    complex_name = line.strip()
+                                    print(f"✅ Название комплекса найдено в характеристиках: {complex_name}")
+                                    return complex_name
+                
+                # Ищем в описании карточки
+                try:
+                    desc_elem = card_element.find_element(By.CSS_SELECTOR, '[data-marker="item-description"]')
+                    if desc_elem:
+                        desc_text = desc_elem.text.strip()
+                        if desc_text:
+                            # Ищем строки в описании, которые могут быть названиями комплексов
+                            desc_lines = desc_text.split('\n')
+                            for line in desc_lines:
+                                line = line.strip()
+                                if line and len(line) > 2:
+                                    line_lower = line.lower()
+                                    # Исключаем строки с явными тегами
+                                    if not any(tag in line_lower for tag in ['собственник', 'агентство', 'документы', 'проверены', 'реквизиты', 'лифт', 'парковка', 'балкон', 'кондиционер', 'метро', 'мин', 'м²', 'эт']):
+                                        # Проверяем, что строка содержит только буквы, цифры, пробелы и дефисы
+                                        if re.match(r'^[А-Яа-яЁё\s\-\d]+$', line):
+                                            complex_name = line.strip()
+                                            print(f"✅ Название комплекса найдено в описании: {complex_name}")
+                                            return complex_name
+                except:
+                    pass
+                
+            except Exception as e:
+                print(f"⚠️ Ошибка поиска названия комплекса по структуре: {e}")
+            
+            if not complex_name:
+                print("⚠️ Название комплекса не найдено")
+            
+            return complex_name
+            
+        except Exception as e:
+            print(f"❌ Ошибка извлечения названия комплекса: {e}")
+            return ""
 
 async def main():
     # Загружаем переменные окружения
