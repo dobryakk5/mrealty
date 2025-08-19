@@ -695,22 +695,41 @@ class EnhancedMetroParser:
                     if new_cards_count > last_parsed_index + 1:
                         # Берем только следующую неспарсенную карточку
                         i = last_parsed_index + 1
-                        try:
-                            card = cards[i]
-                            print(f"🔄 Парсим карточку {i+1}...")
-                            card_data = self.parse_card(card)
-                            if card_data:
-                                card_data['card_number'] = len(parsed_cards) + 1
-                                card_data['raw_text'] = card.text.strip()
-                                parsed_cards.append(card_data)
-                                print(f"✅ Спарсена карточка {len(parsed_cards)}")
-                            
-                            last_parsed_index = i
-                            no_new_cards_attempts = 0  # Сбрасываем счетчик, так как нашли новую карточку
-                            
-                        except Exception as e:
-                            print(f"⚠️ Ошибка парсинга карточки {i+1}: {e}")
-                            last_parsed_index = i  # Помечаем как обработанную, даже если была ошибка
+                        max_retries = 3
+                        retry_count = 0
+                        
+                        while retry_count < max_retries:
+                            try:
+                                # Получаем свежие элементы перед каждой попыткой
+                                fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                                if i >= len(fresh_cards):
+                                    print(f"⚠️ Карточка {i+1} недоступна, пропускаем")
+                                    break
+                                
+                                card = fresh_cards[i]
+                                print(f"🔄 Парсим карточку {i+1}...")
+                                card_data = self.parse_card(card)
+                                if card_data:
+                                    card_data['card_number'] = len(parsed_cards) + 1
+                                    card_data['raw_text'] = card.text.strip()
+                                    parsed_cards.append(card_data)
+                                    print(f"✅ Спарсена карточка {len(parsed_cards)}")
+                                
+                                last_parsed_index = i
+                                no_new_cards_attempts = 0  # Сбрасываем счетчик, так как нашли новую карточку
+                                break  # Успешно спарсили, выходим из retry цикла
+                                
+                            except Exception as e:
+                                error_msg = str(e).lower()
+                                if 'stale element' in error_msg and retry_count < max_retries - 1:
+                                    print(f"🔄 Stale element для карточки {i+1}, пробуем еще раз... (попытка {retry_count + 1}/{max_retries})")
+                                    retry_count += 1
+                                    time.sleep(0.5)  # Небольшая пауза перед повторной попыткой
+                                    continue
+                                else:
+                                    print(f"⚠️ Ошибка парсинга карточки {i+1}: {e}")
+                                    last_parsed_index = i  # Помечаем как обработанную, даже если была ошибка
+                                    break
                     else:
                         # Нет новых карточек, увеличиваем счетчик
                         no_new_cards_attempts += 1
