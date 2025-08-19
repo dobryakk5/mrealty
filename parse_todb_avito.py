@@ -51,6 +51,7 @@ async def create_ads_avito_table() -> None:
                 tags TEXT,
                 person_type TEXT,
                 person TEXT,
+                source_created TIMESTAMP, -- Время публикации на источнике
                 object_type_id SMALLINT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -65,22 +66,20 @@ async def create_ads_avito_table() -> None:
         # Добавляем поле updated_at если его нет
         try:
             await conn.execute("ALTER TABLE ads_avito ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-            print("[DB] Поле updated_at добавлено в таблицу ads_avito")
         except Exception as e:
-            if "already exists" in str(e).lower():
-                print("[DB] Поле updated_at уже существует в таблице ads_avito")
-            else:
-                print(f"[DB] Ошибка добавления поля updated_at: {e}")
+            pass
         
         # Добавляем поле metro_id если его нет
         try:
             await conn.execute("ALTER TABLE ads_avito ADD COLUMN metro_id INTEGER")
-            print("[DB] Поле metro_id добавлено в таблицу ads_avito")
         except Exception as e:
-            if "already exists" in str(e).lower():
-                print("[DB] Поле metro_id уже существует в таблице ads_avito")
-            else:
-                print(f"[DB] Ошибка добавления поля metro_id: {e}")
+            pass
+        
+        # Добавляем поле source_created если его нет
+        try:
+            await conn.execute("ALTER TABLE ads_avito ADD COLUMN source_created TIMESTAMP")
+        except Exception as e:
+            pass
 
 
 async def convert_seller_type_to_number(seller_type):
@@ -108,12 +107,10 @@ async def save_avito_ad(ad_data: dict) -> bool:
         if ad_data.get('avitoid'):
             try:
                 avitoid = int(ad_data['avitoid'])
-                print(f"🔍 Обработка avitoid: {ad_data.get('avitoid')} -> {avitoid}")
             except (ValueError, TypeError):
-                print(f"❌ Ошибка конвертации avitoid: {ad_data.get('avitoid')}")
                 pass
         else:
-            print(f"⚠️ Поле avitoid не найдено в ad_data. Доступные поля: {list(ad_data.keys())}")
+            pass
         
         price = ad_data.get('price')
 
@@ -200,14 +197,17 @@ async def save_avito_ad(ad_data: dict) -> bool:
         # Проверяем и нормализуем source_created
         source_created = ad_data.get('source_created')
         if source_created is None:
-            print(f"ℹ️ source_created не указан, устанавливаем текущую дату")
-            source_created = datetime.now().date()
+            source_created = datetime.now()
         elif isinstance(source_created, str):
-            print(f"⚠️ source_created передается как строка: '{source_created}', устанавливаем текущую дату")
-            source_created = datetime.now().date()
-        elif not isinstance(source_created, (datetime, date)):
-            print(f"⚠️ source_created имеет неожиданный тип: {type(source_created)}, устанавливаем текущую дату")
-            source_created = datetime.now().date()
+            source_created = datetime.now()
+        elif isinstance(source_created, datetime):
+            # Если это datetime, оставляем как есть
+            pass
+        elif isinstance(source_created, date):
+            # Если это date, оставляем как есть
+            pass
+        else:
+            source_created = datetime.now()
         
         # SQL запрос для вставки/обновления
         query = """
@@ -258,12 +258,8 @@ async def save_avito_ad(ad_data: dict) -> bool:
         )
 
         # Проверяем результат операции
-        if "INSERT 0 1" in result:
-            pass  # Убираем лог
-        elif "UPDATE 1" in result:
-            pass  # Убираем лог
-        else:
-            pass  # Убираем лог
+        pass
+        
         return True
 
 
