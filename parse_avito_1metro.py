@@ -1744,6 +1744,14 @@ class EnhancedMetroParser:
     def parse_card(self, card_element):
         """Парсит одну карточку"""
         try:
+            # Дополнительная проверка на stale element
+            try:
+                # Проверяем, что элемент все еще привязан к DOM
+                card_element.is_enabled()
+            except Exception as stale_error:
+                print(f"❌ Элемент карточки стал недействительным (stale): {stale_error}")
+                return None
+            
             card_data = {}
             
             # ID объявления
@@ -2164,6 +2172,9 @@ class EnhancedMetroParser:
             
             loaded_cards_count = self.smooth_scroll_and_load_cards(target_cards)
             
+            # Даем DOM время стабилизироваться после прокрутки
+            time.sleep(2)
+            
             # Получаем все загруженные карточки
             cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
             
@@ -2176,18 +2187,30 @@ class EnhancedMetroParser:
                 cards_to_parse = cards[:self.max_cards]
             
             for i, card in enumerate(cards_to_parse):
-                card_data = self.parse_card(card)
-                
-                # Сохраняем сырой текст для поиска времени публикации
-                if card_data:
-                    card_data['raw_text'] = card.text.strip()
-                    card_data['card_number'] = i + 1
-                    card_data['page_number'] = page  # Добавляем номер страницы
-                    parsed_cards.append(card_data)
+                try:
+                    # Проверяем, что элемент все еще действителен
+                    try:
+                        card.is_enabled()  # Это проверит, что элемент не stale
+                    except:
+                        print(f"⚠️ Карточка {i+1} стала недействительной, пропускаем")
+                        continue
+                    
+                    card_data = self.parse_card(card)
+                    
+                    # Сохраняем сырой текст для поиска времени публикации
+                    if card_data:
+                        card_data['raw_text'] = card.text.strip()
+                        card_data['card_number'] = i + 1
+                        card_data['page_number'] = page  # Добавляем номер страницы
+                        parsed_cards.append(card_data)
+                except Exception as e:
+                    print(f"⚠️ Ошибка парсинга карточки {i+1}: {e}")
+                    continue  # Продолжаем с следующей карточкой
             
             return parsed_cards
             
         except Exception as e:
+            print(f"❌ Ошибка парсинга страницы {page}: {e}")
             return []
     
     def parse_multiple_pages(self):
