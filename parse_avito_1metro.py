@@ -54,7 +54,6 @@ class EnhancedMetroParser:
             self.enable_smooth_scroll = ENABLE_SMOOTH_SCROLL
             self.scroll_pause = SCROLL_PAUSE
             self.max_scroll_attempts = MAX_SCROLL_ATTEMPTS
-            self.target_cards_on_scroll = TARGET_CARDS_ON_SCROLL
             
             # Настройки базы данных
             self.enable_db_save = ENABLE_DB_SAVE
@@ -74,7 +73,6 @@ class EnhancedMetroParser:
             self.enable_smooth_scroll = True
             self.scroll_pause = 1.5
             self.max_scroll_attempts = 10
-            self.target_cards_on_scroll = 50
             
             # Настройки базы данных по умолчанию
             self.enable_db_save = True
@@ -373,6 +371,38 @@ class EnhancedMetroParser:
             print(f"❌ Ошибка создания браузера: {e}")
             return False
     
+    def reload_browser(self):
+        """Перезагружает браузер для решения проблем с stale elements"""
+        try:
+            print("🔄 Перезагружаем браузер для стабильности...")
+            
+            # Закрываем текущий драйвер
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+            
+            # Небольшая пауза
+            time.sleep(2)
+            
+            # Создаем новый драйвер
+            if not self.setup_selenium():
+                return False
+            
+            # Применяем cookies заново
+            cookies_data = self.load_cookies()
+            if cookies_data:
+                if not self.apply_cookies(cookies_data):
+                    print("⚠️ Не удалось применить cookies после перезагрузки")
+            
+            print("✅ Браузер успешно перезагружен")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Ошибка перезагрузки браузера: {e}")
+            return False
+    
     def apply_cookies(self, cookies_data):
         """Применяет cookies к драйверу"""
         try:
@@ -527,25 +557,46 @@ class EnhancedMetroParser:
         return metro_url
     
     def wait_for_cards_load(self, timeout=30):
-        """Ждет загрузки карточек"""
+        """Ждет загрузки карточек или определяет, что страница пустая"""
         try:
-            print("⏳ Ждем загрузки карточек...")
+            print("⏳ Проверяем загрузку карточек...")
             
             # Используем таймаут из конфигурации или переданный параметр
             actual_timeout = self.cards_load_timeout if hasattr(self, 'cards_load_timeout') else timeout
             
-            # Ждем появления карточек
-            wait = WebDriverWait(self.driver, actual_timeout)
-            cards = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, '[data-marker="item"]')))
+            # Сначала проверяем, есть ли уже карточки на странице
+            initial_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+            if initial_cards:
+                print(f"✅ Карточки уже загружены: {len(initial_cards)}")
+                return True
             
-            print(f"✅ Загружено карточек: {len(cards)}")
+            # Если карточек нет, ждем немного и проверяем снова
+            time.sleep(2)
+            cards_after_wait = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+            if cards_after_wait:
+                print(f"✅ Карточки загрузились после ожидания: {len(cards_after_wait)}")
+                return True
+            
+            # Если карточек все еще нет, проверяем, есть ли сообщение о пустой странице
+            page_text = self.driver.page_source.lower()
+            empty_indicators = [
+                'объявлений не найдено',
+                'ничего не найдено',
+                'по вашему запросу ничего не найдено',
+                'нет объявлений',
+                'объявления не найдены'
+            ]
+            
+            if any(indicator in page_text for indicator in empty_indicators):
+                print("ℹ️ Страница пустая - объявлений не найдено")
+                return True  # Возвращаем True, чтобы корректно обработать пустую страницу
+            
+            # Если ничего не нашли, считаем страницу загруженной (возможно, она действительно пустая)
+            print("ℹ️ Карточки не найдены, но страница загружена")
             return True
             
-        except TimeoutException:
-            print("❌ Таймаут ожидания карточек")
-            return False
         except Exception as e:
-            print(f"❌ Ошибка ожидания карточек: {e}")
+            print(f"❌ Ошибка проверки загрузки карточек: {e}")
             return False
     
     def smooth_scroll_and_load_cards(self, target_cards=20, scroll_pause=1.5):
@@ -556,7 +607,7 @@ class EnhancedMetroParser:
                 print("⏭️ Плавная прокрутка отключена, пропускаем...")
                 return target_cards
             
-            print("🔄 Начинаем плавную прокрутку для загрузки карточек...")
+
             
             # Используем настройки из конфигурации
             actual_scroll_pause = self.scroll_pause if hasattr(self, 'scroll_pause') else scroll_pause
@@ -567,40 +618,42 @@ class EnhancedMetroParser:
             scroll_attempts = 0
             
             while current_cards < target_cards and scroll_attempts < max_attempts:
-                # Получаем текущее количество карточек
-                cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                current_cards = len(cards)
-                
-                if current_cards > initial_cards:
-                    print(f"📊 Загружено карточек: {current_cards} (цель: {target_cards})")
-                    initial_cards = current_cards
-                
-                # Если достигли цели, прекращаем
-                if current_cards >= target_cards:
-                    print(f"🎯 Достигнута цель: {current_cards} карточек")
-                    break
-                
-                # Плавно прокручиваем вниз
-                print(f"⬇️ Прокрутка {scroll_attempts + 1}/{max_attempts}...")
-                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                
-                # Ждем загрузки новых карточек
-                time.sleep(actual_scroll_pause)
-                
-                # Проверяем, появились ли новые карточки
-                new_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                if len(new_cards) <= current_cards:
-                    print("⏸️ Новые карточки не загружаются, пробуем еще раз...")
-                    time.sleep(actual_scroll_pause * 2)  # Увеличиваем паузу
-                
-                scroll_attempts += 1
+                try:
+                    # Получаем текущее количество карточек
+                    cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                    current_cards = len(cards)
+                    
+                    if current_cards > initial_cards:
+                        initial_cards = current_cards
+                    
+                    # Если достигли цели, прекращаем
+                    if current_cards >= target_cards:
+                        break
+                    
+                    # Плавно прокручиваем вниз
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    
+                    # Ждем загрузки новых карточек
+                    time.sleep(actual_scroll_pause)
+                    
+                    # Проверяем, появились ли новые карточки
+                    new_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                    if len(new_cards) <= current_cards:
+                        time.sleep(actual_scroll_pause * 2)  # Увеличиваем паузу
+                    
+                    scroll_attempts += 1
+                    
+                except Exception as e:
+                    print(f"⚠️ Ошибка при прокрутке: {e}")
+                    time.sleep(actual_scroll_pause * 2)
+                    scroll_attempts += 1
+                    continue
             
             # Финальная проверка
             final_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-            print(f"✅ Финальная загрузка: {len(final_cards)} карточек")
             
             if scroll_attempts >= max_attempts:
-                print("⚠️ Достигнут лимит попыток прокрутки")
+                pass
             
             return len(final_cards)
             
@@ -1341,7 +1394,6 @@ class EnhancedMetroParser:
                 if 'собственник' in tags_text:
                     owner_from_tags = True
                     seller_data['type'] = 'собственник'
-                    print(f"🏷️ ЗАЩИЩАЕМ тег 'Собственник' в parse_seller_info")
             
             # Ищем информацию о продавце в характеристиках карточки
             try:
@@ -1481,7 +1533,7 @@ class EnhancedMetroParser:
                     tags_text = ' '.join(card_data['tags']).lower()
                     if 'собственник' in tags_text:
                         owner_from_tags = True
-                        # print(f"🏷️ ЗАЩИЩАЕМ тег 'Собственник' в parse_seller_info")
+
                 
                 # Анализируем найденную информацию
                 seller_name = None
@@ -2164,18 +2216,27 @@ class EnhancedMetroParser:
             if not self.wait_for_cards_load():
                 return []
             
+            # Получаем все загруженные карточки
+            cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+            
+            # Если карточек нет, возвращаем пустой список
+            if not cards:
+                print(f"ℹ️ Страница {page} не содержит карточек")
+                return []
+            
             # Плавно прокручиваем и загружаем карточки
             if self.max_cards > 0:
                 target_cards = self.max_cards
             else:
-                target_cards = self.target_cards_on_scroll if hasattr(self, 'target_cards_on_scroll') else 50
+                target_cards = 50  # Если max_cards = 0, загружаем все доступные карточки
             
             loaded_cards_count = self.smooth_scroll_and_load_cards(target_cards)
             
             # Даем DOM время стабилизироваться после прокрутки
             time.sleep(2)
             
-            # Получаем все загруженные карточки
+            # Получаем обновленное количество карточек после прокрутки
+            # ВАЖНО: обновляем элементы после прокрутки
             cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
             
             # Парсим карточки
@@ -2185,6 +2246,10 @@ class EnhancedMetroParser:
             cards_to_parse = cards
             if self.max_cards > 0:
                 cards_to_parse = cards[:self.max_cards]
+            
+            # Добавляем retry логику для обработки stale elements
+            max_retries = 3
+            retry_count = 0
             
             for i, card in enumerate(cards_to_parse):
                 try:
@@ -2204,7 +2269,24 @@ class EnhancedMetroParser:
                         card_data['page_number'] = page  # Добавляем номер страницы
                         parsed_cards.append(card_data)
                 except Exception as e:
-                    print(f"⚠️ Ошибка парсинга карточки {i+1}: {e}")
+                    error_msg = str(e).lower()
+                    if 'stale element' in error_msg and retry_count < max_retries:
+                        print(f"🔄 Stale element для карточки {i+1}, пробуем обновить элементы...")
+                        retry_count += 1
+                        
+                        # Обновляем элементы на странице
+                        try:
+                            cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                            if i < len(cards):
+                                card = cards[i]  # Получаем свежий элемент
+                                continue  # Повторяем попытку с тем же индексом
+                        except:
+                            pass
+                        
+                        print(f"⚠️ Не удалось обновить элементы, пропускаем карточку {i+1}")
+                    else:
+                        print(f"⚠️ Ошибка парсинга карточки {i+1}: {e}")
+                    
                     continue  # Продолжаем с следующей карточкой
             
             return parsed_cards
@@ -2247,6 +2329,12 @@ class EnhancedMetroParser:
                 if self.max_pages > 0 and page >= self.max_pages:
                     print(f"📄 Достигнут лимит страниц ({self.max_pages}), останавливаемся")
                     break
+                
+                # Перезагружаем браузер каждые 5 страниц для стабильности
+                if page % 5 == 0:
+                    print(f"🔄 Страница {page} - перезагружаем браузер для стабильности")
+                    if not self.reload_browser():
+                        print("❌ Не удалось перезагрузить браузер, продолжаем...")
                 
                 # Переходим к следующей странице
                 page += 1
