@@ -2247,15 +2247,24 @@ class EnhancedMetroParser:
             if self.max_cards > 0:
                 cards_to_parse = cards[:self.max_cards]
             
-            # Добавляем retry логику для обработки stale elements
+            # Улучшенная защита от stale elements
             max_retries = 3
             retry_count = 0
             
-            for i, card in enumerate(cards_to_parse):
+            for i in range(len(cards_to_parse)):
+                # Получаем свежий элемент для каждой карточки
                 try:
-                    # Проверяем, что элемент все еще действителен
+                    # Обновляем список карточек перед каждой итерацией
+                    fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                    if i >= len(fresh_cards):
+                        print(f"⚠️ Карточка {i+1} недоступна, пропускаем")
+                        continue
+                    
+                    card = fresh_cards[i]
+                    
+                    # Проверяем, что элемент действителен
                     try:
-                        card.is_enabled()  # Это проверит, что элемент не stale
+                        card.is_enabled()
                     except:
                         print(f"⚠️ Карточка {i+1} стала недействительной, пропускаем")
                         continue
@@ -2268,22 +2277,29 @@ class EnhancedMetroParser:
                         card_data['card_number'] = i + 1
                         card_data['page_number'] = page  # Добавляем номер страницы
                         parsed_cards.append(card_data)
+                        
                 except Exception as e:
                     error_msg = str(e).lower()
-                    if 'stale element' in error_msg and retry_count < max_retries:
-                        print(f"🔄 Stale element для карточки {i+1}, пробуем обновить элементы...")
-                        retry_count += 1
+                    if 'stale element' in error_msg:
+                        print(f"🔄 Stale element для карточки {i+1}, пробуем еще раз...")
                         
-                        # Обновляем элементы на странице
+                        # Дополнительная попытка с обновлением элементов
                         try:
-                            cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                            if i < len(cards):
-                                card = cards[i]  # Получаем свежий элемент
-                                continue  # Повторяем попытку с тем же индексом
+                            time.sleep(1)  # Небольшая пауза
+                            fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                            if i < len(fresh_cards):
+                                card = fresh_cards[i]
+                                card_data = self.parse_card(card)
+                                if card_data:
+                                    card_data['raw_text'] = card.text.strip()
+                                    card_data['card_number'] = i + 1
+                                    card_data['page_number'] = page
+                                    parsed_cards.append(card_data)
+                                    continue
                         except:
                             pass
                         
-                        print(f"⚠️ Не удалось обновить элементы, пропускаем карточку {i+1}")
+                        print(f"⚠️ Не удалось обработать карточку {i+1}, пропускаем")
                     else:
                         print(f"⚠️ Ошибка парсинга карточки {i+1}: {e}")
                     
@@ -2330,8 +2346,8 @@ class EnhancedMetroParser:
                     print(f"📄 Достигнут лимит страниц ({self.max_pages}), останавливаемся")
                     break
                 
-                # Перезагружаем браузер каждые 5 страниц для стабильности
-                if page % 5 == 0:
+                # Перезагружаем браузер каждые 4 страницы для стабильности
+                if page % 4 == 0:
                     print(f"🔄 Страница {page} - перезагружаем браузер для стабильности")
                     if not self.reload_browser():
                         print("❌ Не удалось перезагрузить браузер, продолжаем...")
