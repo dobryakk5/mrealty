@@ -15,13 +15,13 @@ from parse_avito_1metro import EnhancedMetroParser
 # =============================================================================
 
 # Метро по умолчанию (ID из таблицы metro)
-DEFAULT_METRO_ID = 1
+DEFAULT_METRO_ID = 2
 
-# Количество страниц по умолчанию
-DEFAULT_MAX_PAGES = 1
+# Количество страниц по умолчанию (0 = все страницы)
+DEFAULT_MAX_PAGES = 0
 
 # Количество карточек на странице по умолчанию (0 = все карточки)
-DEFAULT_MAX_CARDS = 50
+DEFAULT_MAX_CARDS = 0
 
 # =============================================================================
 # КОНЕЦ НАСТРОЕК
@@ -53,8 +53,8 @@ async def quick_parse_metro(metro_id, max_pages, max_cards=None):
     parser.database_url = database_url
     
     print(f"🚀 Быстрый парсинг метро ID={metro_id}")
-    print(f"📄 Страниц: {max_pages}")
-    print(f"📊 Карточек на странице: {max_cards if max_cards else 'все'}")
+    print(f"📄 Страниц: {max_pages if max_pages > 0 else 'все'}")
+    print(f"📊 Карточек на странице: {max_cards if max_cards and max_cards > 0 else 'все'}")
     print("=" * 60)
     
     # Запускаем парсинг
@@ -83,7 +83,7 @@ def main():
         print("🚀 Запуск с настройками по умолчанию")
         print(f"⚙️ Текущие настройки:")
         print(f"   • Метро ID: {DEFAULT_METRO_ID}")
-        print(f"   • Страниц: {DEFAULT_MAX_PAGES}")
+        print(f"   • Страниц: {DEFAULT_MAX_PAGES if DEFAULT_MAX_PAGES > 0 else 'все'}")
         print(f"   • Карточек на странице: {DEFAULT_MAX_CARDS if DEFAULT_MAX_CARDS > 0 else 'все'}")
         print("=" * 60)
         
@@ -103,15 +103,19 @@ def main():
         print("   python quick_metro_parse.py <metro_id> <pages> # Метро ID + страницы, карточки по умолчанию")
         print("   python quick_metro_parse.py <metro_id> <pages> <cards> # Все параметры")
         print("\n📝 Примеры:")
-        print("   python quick_metro_parse.py                    # Метро ID=2, 1 страница, 5 карточек")
-        print("   python quick_metro_parse.py 1                 # Метро ID=1, 1 страница, 5 карточек")
-        print("   python quick_metro_parse.py 1 3               # Метро ID=1, 3 страницы, 5 карточек")
+        print("   python quick_metro_parse.py                    # Метро ID=2, все страницы, все карточки")
+        print("   python quick_metro_parse.py 1                 # Метро ID=1, все страницы, все карточки")
+        print("   python quick_metro_parse.py 1 3               # Метро ID=1, 3 страницы, все карточки")
         print("   python quick_metro_parse.py 2 1 15            # Метро ID=2, 1 страница, 15 карточек")
-        print("   python quick_metro_parse.py 5 2 0             # Метро ID=5, 2 страницы, все карточки")
+        print("   python quick_metro_parse.py 5 0 0             # Метро ID=5, все страницы, все карточки")
+        print("   python quick_metro_parse.py 3 2 0             # Метро ID=3, 2 страницы, все карточки")
         print(f"\n⚙️ Текущие настройки по умолчанию:")
         print(f"   • Метро ID: {DEFAULT_METRO_ID}")
-        print(f"   • Страниц: {DEFAULT_MAX_PAGES}")
+        print(f"   • Страниц: {DEFAULT_MAX_PAGES if DEFAULT_MAX_PAGES > 0 else 'все'}")
         print(f"   • Карточек на странице: {DEFAULT_MAX_CARDS if DEFAULT_MAX_CARDS > 0 else 'все'}")
+        print("\n💡 Специальные значения:")
+        print(f"   • Страниц = 0: парсить все доступные страницы")
+        print(f"   • Карточек = 0: парсить все карточки на странице")
         return
     
     try:
@@ -137,8 +141,8 @@ def main():
             print("❌ ID метро должен быть положительным числом")
             return
         
-        if max_pages <= 0:
-            print("❌ Количество страниц должно быть положительным числом")
+        if max_pages < 0:
+            print("❌ Количество страниц должно быть неотрицательным числом")
             return
         
         if max_cards is not None and max_cards < 0:
