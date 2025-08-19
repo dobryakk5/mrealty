@@ -684,7 +684,7 @@ class EnhancedMetroParser:
             scroll_attempts = 0
             last_parsed_index = -1
             
-            while current_cards < target_cards and scroll_attempts < max_attempts:
+            while len(parsed_cards) < target_cards and scroll_attempts < max_attempts:
                 try:
                     # Получаем текущее количество карточек
                     cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
@@ -706,19 +706,11 @@ class EnhancedMetroParser:
                             
                             last_parsed_index = i
                             
-                            # Если достигли цели, прекращаем
-                            if len(parsed_cards) >= target_cards:
-                                break
-                                
                         except Exception as e:
                             print(f"⚠️ Ошибка парсинга карточки {i+1}: {e}")
                             last_parsed_index = i  # Помечаем как обработанную, даже если была ошибка
                     
-                    # Если достигли цели, прекращаем
-                    if len(parsed_cards) >= target_cards:
-                        break
-                    
-                    # Плавно прокручиваем вниз
+                    # Плавно прокручиваем вниз для поиска новых карточек
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                     
                     # Проверяем, появились ли новые карточки
