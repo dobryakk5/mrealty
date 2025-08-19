@@ -677,21 +677,22 @@ class EnhancedMetroParser:
             
             # Используем настройки из конфигурации
             actual_scroll_pause = self.scroll_pause if hasattr(self, 'scroll_pause') else scroll_pause
-            max_attempts = self.max_scroll_attempts if hasattr(self, 'scroll_pause') else 10
+            max_attempts = target_cards * 2  # Увеличиваем лимит попыток в зависимости от цели
             
             parsed_cards = []
             current_cards = 0
             scroll_attempts = 0
             last_parsed_index = -1
+            no_new_cards_attempts = 0  # Счетчик попыток без новых карточек
             
-            while len(parsed_cards) < target_cards and scroll_attempts < max_attempts:
+            while len(parsed_cards) < target_cards and scroll_attempts < max_attempts and no_new_cards_attempts < 5:
                 try:
                     # Получаем текущее количество карточек
                     cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                    current_cards = len(cards)
+                    new_cards_count = len(cards)
                     
                     # Парсим только одну новую карточку за раз
-                    if current_cards > last_parsed_index + 1:
+                    if new_cards_count > last_parsed_index + 1:
                         # Берем только следующую неспарсенную карточку
                         i = last_parsed_index + 1
                         try:
@@ -705,10 +706,17 @@ class EnhancedMetroParser:
                                 print(f"✅ Спарсена карточка {len(parsed_cards)}")
                             
                             last_parsed_index = i
+                            no_new_cards_attempts = 0  # Сбрасываем счетчик, так как нашли новую карточку
                             
                         except Exception as e:
                             print(f"⚠️ Ошибка парсинга карточки {i+1}: {e}")
                             last_parsed_index = i  # Помечаем как обработанную, даже если была ошибка
+                    else:
+                        # Нет новых карточек, увеличиваем счетчик
+                        no_new_cards_attempts += 1
+                        if no_new_cards_attempts >= 5:
+                            print(f"⏹️ Нет новых карточек после {no_new_cards_attempts} попыток, завершаем")
+                            break
                     
                     # Плавно прокручиваем вниз для поиска новых карточек
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
