@@ -578,6 +578,9 @@ class EnhancedMetroParser:
                     break
                 time.sleep(0.1)  # Короткая пауза
             
+            # ДОПОЛНИТЕЛЬНАЯ пауза для стабилизации первых карточек
+            time.sleep(0.5)
+            
             print("✅ DOM стабилизирован, карточки загружены")
             return True
             
