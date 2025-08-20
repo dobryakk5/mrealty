@@ -799,33 +799,34 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
         # Проверяем, есть ли незавершенная сессия
         progress = await get_last_parsing_progress(property_type, time_period, 4)  # source = 4 для CIAN
         
+        if progress:
+            print(f"🔍 Найдена сессия: ID={progress['id']}, статус={progress['status']}")
+            print(f"   • Обработано метро: {progress['processed_metros']}/{progress['total_metros']}")
+            print(f"   • Текущее метро ID: {progress['current_metro_id']}")
+        else:
+            print("🔍 Активная сессия не найдена")
+        
         if progress and progress['status'] == 'active':
             # Продолжаем с места остановки
-            print(f"🔄 Продолжаем незавершенную сессию {progress['id']} с метро ID {progress['current_metro_id']}")
+            print(f"🔄 Продолжаем незавершенную сессию {progress['id']}")
+            print(f"   • Обработано метро: {progress['processed_metros']}")
+            print(f"   • Последнее метро ID: {progress['current_metro_id']}")
             session_id = progress['id']
             
-            # Находим следующую станцию по metro.id (не по позиции)
-            current_index = None
-            print(f"[DEBUG] Ищем следующую станцию после metro.id = {progress['current_metro_id']}")
+            # Используем processed_metros для определения следующего индекса
+            # processed_metros = количество уже обработанных метро
+            # current_index = индекс следующего метро для обработки
+            current_index = progress['processed_metros']
             
-            # Ищем станцию с metro.id максимально близким к текущему, но больше
-            target_metro_id = progress['current_metro_id']
-            best_match = None
-            best_index = None
-            
-            for i, station in enumerate(metro_stations):
-                if station['id'] > target_metro_id:
-                    if best_match is None or station['id'] < best_match['id']:
-                        best_match = station
-                        best_index = i
-            
-            if best_match:
-                current_index = best_index
-                print(f"[DEBUG] Найдена следующая станция: metro.id = {best_match['id']}, {best_match['name']} на позиции {best_index}")
+            if current_index < len(metro_stations):
+                next_station = metro_stations[current_index]
+                print(f"🔄 Продолжаем с метро {current_index + 1}/{len(metro_stations)}: {next_station['name']} (ID: {next_station['id']})")
             else:
-                print(f"⚠️ Следующая станция после metro.id = {progress['current_metro_id']} не найдена, начинаем сначала")
-                current_index = 0
-                session_id = await create_parsing_session(property_type, time_period, len(metro_stations), 4)  # source = 4 для CIAN
+                print(f"⚠️ Все метро уже обработаны (processed_metros={progress['processed_metros']}, total={len(metro_stations)})")
+                # Завершаем сессию, так как все метро уже обработаны
+                await complete_parsing_session(session_id)
+                print(f"✅ Сессия {session_id} завершена - все метро уже обработаны")
+                return []
         else:
             # Создаем новую сессию
             print("🆕 Создаем новую сессию парсинга")
