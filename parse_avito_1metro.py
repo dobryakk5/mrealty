@@ -946,7 +946,37 @@ class EnhancedMetroParser:
                                             card = fresh_cards_check[0]
                                             print("      ✅ Получены свежие элементы после ошибки проверки")
                                 
-                                card_data = self.parse_card(card)
+                                # ВАЖНО: Получаем элементы прямо перед парсингом для первой карточки
+                                if i == 0:
+                                    print("      🔄 Получаем элементы прямо перед парсингом...")
+                                    try:
+                                        final_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                                        if len(final_cards) > 0:
+                                            card = final_cards[0]
+                                            print("      ✅ Элементы получены прямо перед парсингом")
+                                            # Небольшая пауза для стабилизации DOM
+                                            time.sleep(0.2)
+                                        else:
+                                            print("      ⚠️ Не удалось получить элементы прямо перед парсингом")
+                                    except Exception as final_error:
+                                        print(f"      ⚠️ Ошибка получения элементов: {final_error}")
+                                
+                                # Для первой карточки пробуем JavaScript парсинг как запасной вариант
+                                if i == 0:
+                                    print("      🔄 Пробуем JavaScript парсинг первой карточки...")
+                                    try:
+                                        js_data = self.parse_card_with_javascript(card)
+                                        if js_data:
+                                            print("      ✅ JavaScript парсинг успешен")
+                                            card_data = js_data
+                                        else:
+                                            print("      ⚠️ JavaScript парсинг не дал данных, используем обычный")
+                                            card_data = self.parse_card(card)
+                                    except Exception as js_error:
+                                        print(f"      ⚠️ Ошибка JavaScript парсинга: {js_error}, используем обычный")
+                                        card_data = self.parse_card(card)
+                                else:
+                                    card_data = self.parse_card(card)
                                 if card_data:
                                     card_data['card_number'] = i + 1
                                     card_data['raw_text'] = card.text.strip()
@@ -1165,6 +1195,73 @@ class EnhancedMetroParser:
             
         except Exception as e:
             print(f"❌ Ошибка парсинга с Schema.org: {e}")
+
+    def parse_card_with_javascript(self, card_element):
+        """Парсит карточку используя JavaScript для обхода stale element проблем"""
+        try:
+            print("      🔍 JavaScript парсинг: начинаем...")
+            
+            # Используем JavaScript для получения данных карточки
+            js_script = """
+            function parseCard(card) {
+                try {
+                    const data = {};
+                    
+                    // Получаем заголовок
+                    const titleElem = card.querySelector('a.snippet-link');
+                    if (titleElem) {
+                        data.title = titleElem.getAttribute('title') || titleElem.textContent.trim();
+                    }
+                    
+                    // Получаем цену
+                    const priceElem = card.querySelector('span[data-marker="item-price"]');
+                    if (priceElem) {
+                        data.price = priceElem.textContent.trim();
+                    }
+                    
+                    // Получаем ссылку
+                    if (titleElem) {
+                        data.link = titleElem.href;
+                    }
+                    
+                    // Получаем адрес
+                    const addressElem = card.querySelector('[data-marker="item-address"]');
+                    if (addressElem) {
+                        data.address = addressElem.textContent.trim();
+                    }
+                    
+                    // Получаем описание
+                    const descElem = card.querySelector('[data-marker="item-description"]');
+                    if (descElem) {
+                        data.description = descElem.textContent.trim();
+                    }
+                    
+                    // Получаем ID объявления
+                    const idElem = card.querySelector('[data-marker="item"]');
+                    if (idElem) {
+                        data.item_id = idElem.getAttribute('data-item-id');
+                    }
+                    
+                    return data;
+                } catch (e) {
+                    return null;
+                }
+            }
+            return parseCard(arguments[0]);
+            """
+            
+            result = self.driver.execute_script(js_script, card_element)
+            
+            if result and isinstance(result, dict):
+                print("      ✅ JavaScript парсинг успешен")
+                return result
+            else:
+                print("      ⚠️ JavaScript парсинг не дал данных")
+                return None
+                
+        except Exception as e:
+            print(f"      ❌ Ошибка JavaScript парсинга: {e}")
+            return None
 
     def prepare_data_for_db(self, card_data):
         """Подготавливает данные карточки для сохранения в БД ads_avito"""
