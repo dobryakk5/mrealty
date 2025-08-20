@@ -910,11 +910,42 @@ class EnhancedMetroParser:
                                     self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", card)
                                     time.sleep(0.3)  # Ждем завершения скролла
                                     print("      ✅ Скролл к первой карточке завершен")
+                                    
+                                    # ВАЖНО: После скролла получаем свежие элементы
+                                    print("      🔄 Получаем свежие элементы после скролла...")
+                                    fresh_cards_after_scroll = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                                    if len(fresh_cards_after_scroll) > 0:
+                                        card = fresh_cards_after_scroll[0]  # Обновляем ссылку на элемент
+                                        print("      ✅ Свежие элементы получены после скролла")
+                                    else:
+                                        print("      ⚠️ Не удалось получить свежие элементы после скролла")
                                 except Exception as scroll_error:
                                     print(f"      ⚠️ Ошибка скролла к карточке: {scroll_error}")
                             
                             # Парсим карточку как в старом скрипте
                             try:
+                                # Дополнительная проверка для первой карточки
+                                if i == 0:
+                                    print("      🔍 Проверяем состояние первой карточки перед парсингом...")
+                                    try:
+                                        is_displayed = card.is_displayed()
+                                        is_enabled = card.is_enabled()
+                                        print(f"      📊 Карточка видима: {is_displayed}, активна: {is_enabled}")
+                                        
+                                        if not is_displayed or not is_enabled:
+                                            print("      ⚠️ Карточка не готова к парсингу, получаем свежие элементы...")
+                                            fresh_cards_check = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                                            if len(fresh_cards_check) > 0:
+                                                card = fresh_cards_check[0]
+                                                print("      ✅ Получены свежие элементы для парсинга")
+                                    except Exception as check_error:
+                                        print(f"      ⚠️ Ошибка проверки карточки: {check_error}")
+                                        # Получаем свежие элементы при ошибке проверки
+                                        fresh_cards_check = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                                        if len(fresh_cards_check) > 0:
+                                            card = fresh_cards_check[0]
+                                            print("      ✅ Получены свежие элементы после ошибки проверки")
+                                
                                 card_data = self.parse_card(card)
                                 if card_data:
                                     card_data['card_number'] = i + 1
