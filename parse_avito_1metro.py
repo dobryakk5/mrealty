@@ -880,11 +880,7 @@ class EnhancedMetroParser:
                     
                     while retry_count < max_retries and not card_parsed:
                         try:
-                            if i >= len(cards_elements):
-                                print(f"⚠️ Карточка {i+1} недоступна, пропускаем")
-                                break
-                                
-                            # Получаем свежие элементы перед каждой попыткой
+                            # ВАЖНО: Получаем свежие элементы перед каждой попыткой (как в старом скрипте)
                             fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
                             if i >= len(fresh_cards):
                                 print(f"⚠️ Карточка {i+1} недоступна в свежих элементах, пропускаем")
@@ -938,11 +934,13 @@ class EnhancedMetroParser:
                     group_parsed_count = 0
                     for j in range(start_idx, end_idx):
                         try:
-                            if j >= len(cards_elements):
-                                print(f"⚠️ Карточка {j+1} недоступна, пропускаем")
+                            # ВАЖНО: Получаем свежие элементы перед каждой попыткой (как в старом скрипте)
+                            fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                            if j >= len(fresh_cards):
+                                print(f"⚠️ Карточка {j+1} недоступна в свежих элементах, пропускаем")
                                 continue
                                 
-                            card = cards_elements[j]
+                            card = fresh_cards[j]
                             card_data = self.parse_card(card)
                             if card_data:
                                 card_data['card_number'] = j + 1
