@@ -982,6 +982,12 @@ class EnhancedMetroParser:
                                                 first_card_data = self.parse_card(first_card_refresh)
                                                 if first_card_data:
                                                     print("      ✅ Первая карточка успешно перепарсена для стабильности")
+                                                    # ВАЖНО: Если первая карточка не была в результатах, добавляем её
+                                                    if not any(card.get('card_number') == 1 for card in parsed_cards):
+                                                        first_card_data['card_number'] = 1
+                                                        first_card_data['raw_text'] = first_card_refresh.text.strip()
+                                                        parsed_cards.insert(0, first_card_data)  # Вставляем в начало
+                                                        print("      ✅ Первая карточка добавлена в результаты после перепарсинга")
                                                 else:
                                                     print("      ⚠️ Первая карточка не дала данных при перепарсинге")
                                             else:
