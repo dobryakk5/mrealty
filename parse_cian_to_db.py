@@ -3,6 +3,11 @@
 Парсер объявлений CIAN с сохранением в БД
 Извлекает данные со страницы поиска и сохраняет в таблицу ads_cian
 
+СИСТЕМА ОТСЛЕЖИВАНИЯ ПРОГРЕССА:
+- Прогресс парсинга сохраняется в таблице system.parsing_progress
+- Поле source = 4 для CIAN (1=AVITO, 2=DOMCLICK, 3=YANDEX)
+- Система автоматически восстанавливается после прерывания
+
 ФИЛЬТРЫ ПОИСКА:
 1. Тип жилья (property_type): 1=вторичка, 2=новостройки
 2. Время публикации (time_period): w=неделя, d=день, h=час, none=без ограничений
@@ -792,7 +797,7 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
         print("=" * 80)
         
         # Проверяем, есть ли незавершенная сессия
-        progress = await get_last_parsing_progress(property_type, time_period)
+        progress = await get_last_parsing_progress(property_type, time_period, 4)  # source = 4 для CIAN
         
         if progress and progress['status'] == 'active':
             # Продолжаем с места остановки
@@ -820,11 +825,11 @@ async def fetch_and_save_listings(property_type: int = PROPERTY_TYPE, time_perio
             else:
                 print(f"⚠️ Следующая станция после metro.id = {progress['current_metro_id']} не найдена, начинаем сначала")
                 current_index = 0
-                session_id = await create_parsing_session(property_type, time_period, len(metro_stations))
+                session_id = await create_parsing_session(property_type, time_period, len(metro_stations), 4)  # source = 4 для CIAN
         else:
             # Создаем новую сессию
             print("🆕 Создаем новую сессию парсинга")
-            session_id = await create_parsing_session(property_type, time_period, len(metro_stations))
+            session_id = await create_parsing_session(property_type, time_period, len(metro_stations), 4)  # source = 4 для CIAN
             current_index = 0
         
         all_cards = []

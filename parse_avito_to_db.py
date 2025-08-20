@@ -3,6 +3,12 @@
 Парсер всех метро Москвы с гибкими параметрами
 Использование: python parse_avito_to_db.py [опции]
 
+СИСТЕМА ОТСЛЕЖИВАНИЯ ПРОГРЕССА:
+- Прогресс парсинга сохраняется в таблице system.parsing_progress
+- Поле source = 1 для AVITO (4=CIAN, 2=DOMCLICK, 3=YANDEX)
+- Система автоматически восстанавливается после прерывания
+- При парсинге всех метро (--all) прогресс сохраняется по каждой станции
+
 Опции:
   --metro-ids 1,2,3     Список конкретных metro.id через запятую
   --exclude 4,5,6       Исключить определенные metro.id
@@ -22,8 +28,17 @@ import asyncio
 import sys
 import os
 import argparse
+import time
 from dotenv import load_dotenv
 from parse_avito_1metro import EnhancedMetroParser
+
+# Импортируем функции работы с БД для отслеживания прогресса
+from parse_todb import (
+    create_parsing_session,
+    update_parsing_progress,
+    complete_parsing_session,
+    get_last_parsing_progress
+)
 
 # =============================================================================
 # НАСТРОЙКИ ПО УМОЛЧАНИЮ
@@ -192,29 +207,90 @@ class MetroBatchParser:
             self.stats['failed_metro'] += 1
             return False
     
-    async def parse_metro_batch(self, metro_list, max_pages, max_cards):
-        """Парсит пакет метро"""
+    async def parse_metro_batch(self, metro_list, max_pages, max_cards, use_progress_tracking=False):
+        """
+        Парсит пакет метро
+        
+        Args:
+            metro_list: Список метро для парсинга
+            max_pages: Максимальное количество страниц
+            max_cards: Максимальное количество карточек на странице
+            use_progress_tracking: Включить отслеживание прогресса (только для --all)
+        """
         if not metro_list:
             print("❌ Список метро пуст")
             return False
         
         self.stats['total_metro'] = len(metro_list)
         
+        # Инициализация системы отслеживания прогресса
+        session_id = None
+        current_index = 0
+        
+        if use_progress_tracking:
+            print("🔄 Проверяем наличие незавершенной сессии парсинга...")
+            
+            # Проверяем, есть ли незавершенная сессия для AVITO
+            progress = await get_last_parsing_progress(1, None)  # property_type=1 для AVITO
+            
+            if progress and progress['status'] == 'active':
+                # Продолжаем с места остановки
+                print(f"🔄 Продолжаем незавершенную сессию {progress['id']} с метро ID {progress['current_metro_id']}")
+                session_id = progress['id']
+                
+                # Находим следующую станцию по metro.id
+                target_metro_id = progress['current_metro_id']
+                best_match = None
+                best_index = None
+                
+                for i, station in enumerate(metro_list):
+                    if station['id'] > target_metro_id:
+                        if best_match is None or station['id'] < best_match['id']:
+                            best_match = station
+                            best_index = i
+                
+                if best_match:
+                    current_index = best_index
+                    print(f"🔄 Найдена следующая станция: metro.id = {best_match['id']}, {best_match['name']} на позиции {best_index}")
+                else:
+                    print(f"⚠️ Следующая станция после metro.id = {progress['current_metro_id']} не найдена, начинаем сначала")
+                    current_index = 0
+                    session_id = await create_parsing_session(1, None, len(metro_list), AVITO_SOURCE)
+            else:
+                # Создаем новую сессию
+                print("🆕 Создаем новую сессию парсинга AVITO")
+                session_id = await create_parsing_session(1, None, len(metro_list), AVITO_SOURCE)
+                current_index = 0
+        
         print(f"\n🎯 Начинаем парсинг {len(metro_list)} метро")
         print(f"📄 Максимум страниц: {max_pages if max_pages > 0 else 'все'}")
         print(f"📊 Максимум карточек: {max_cards if max_cards and max_cards > 0 else 'все'}")
+        if use_progress_tracking:
+            print(f"🔄 Отслеживание прогресса: {'включено' if session_id else 'выключено'}")
         print("=" * 60)
         
-        for i, metro_info in enumerate(metro_list, 1):
-            print(f"\n📍 Метро {i}/{len(metro_list)}")
+        # Обрабатываем метро начиная с текущего индекса
+        for i in range(current_index, len(metro_list)):
+            metro_info = metro_list[i]
+            print(f"\n📍 Метро {i+1}/{len(metro_list)}: {metro_info['name']} (ID: {metro_info['id']})")
             
             # Парсим метро
             success = await self.parse_single_metro(metro_info, max_pages, max_cards)
             
+            # Обновляем прогресс ПОСЛЕ успешной обработки метро
+            if use_progress_tracking and session_id:
+                await update_parsing_progress(session_id, metro_info['id'], i + 1)
+                print(f"📊 Прогресс обновлен: {i+1}/{len(metro_list)} метро обработано")
+            
             # Задержка между метро (кроме последнего)
-            if i < len(metro_list):
+            if i < len(metro_list) - 1:
                 print(f"⏳ Ждем {METRO_DELAY} секунд перед следующим метро...")
                 await asyncio.sleep(METRO_DELAY)
+        
+        # Завершаем сессию если использовали отслеживание прогресса
+        if use_progress_tracking and session_id:
+            await complete_parsing_session(session_id)
+            print(f"✅ Сессия парсинга {session_id} завершена")
         
         # Выводим итоговую статистику
         self.print_final_stats()
@@ -307,10 +383,14 @@ async def main():
             print(f"   • {metro['name']} (ID: {metro['id']}, avito_id: {metro['avito_id']})")
         
         # Запускаем парсинг
+        # Используем отслеживание прогресса только для парсинга всех метро (--all)
+        use_progress_tracking = args.all
+        
         success = await batch_parser.parse_metro_batch(
             metro_list, 
             args.max_pages, 
-            args.max_cards
+            args.max_cards,
+            use_progress_tracking
         )
         
         return success

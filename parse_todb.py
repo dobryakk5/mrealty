@@ -73,6 +73,7 @@ async def create_ads_cian_table() -> None:
                 property_type INTEGER NOT NULL,
                 time_period INTEGER,  -- Может быть NULL для отключения фильтра по времени
                 current_metro_id INTEGER NOT NULL,
+                source SMALLINT NOT NULL DEFAULT 4,  -- Источник парсинга (4=CIAN, 1=AVITO, 2=DOMCLICK, 3=YANDEX)
                 time_upd TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 status TEXT DEFAULT 'active',
                 total_metros INTEGER,
@@ -80,8 +81,8 @@ async def create_ads_cian_table() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             
-            CREATE INDEX IF NOT EXISTS idx_parsing_progress_latest ON system.parsing_progress(property_type, time_period, time_upd DESC);
-            CREATE INDEX IF NOT EXISTS idx_parsing_progress_no_time ON system.parsing_progress(property_type, time_upd DESC) WHERE time_period IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_parsing_progress_latest ON system.parsing_progress(property_type, time_period, source, time_upd DESC);
+            CREATE INDEX IF NOT EXISTS idx_parsing_progress_no_time ON system.parsing_progress(property_type, source, time_upd DESC) WHERE time_period IS NULL;
             """)
             print("[DB] Таблица system.parsing_progress создана успешно")
             
@@ -505,8 +506,8 @@ async def close_cian_pool():
         _cian_db_pool = None
         print("[DB] Пул соединений с БД закрыт")
 
-async def create_parsing_session(property_type: int, time_period: int = None, total_metros: int = None) -> int:
-    """Создает новую сессию парсинга для all запуска. Возвращает ID сессии."""
+async def create_parsing_session(property_type: int, time_period: int = None, total_metros: int = None, source: int = 4) -> int:
+    """Создает новую сессию парсинга для all запуска. Возвращает ID сессии. source = 4 для CIAN, 1 для AVITO."""
     pool = await _get_cian_pool()
     async with pool.acquire() as conn:
         try:
@@ -523,12 +524,13 @@ async def create_parsing_session(property_type: int, time_period: int = None, to
             # Создаем запись о новой сессии (записываем metro.id)
             session_id = await conn.fetchval("""
                 INSERT INTO system.parsing_progress 
-                (property_type, time_period, current_metro_id, total_metros, status)
-                VALUES ($1, $2, $3, $4, 'active')
+                (property_type, time_period, current_metro_id, source, total_metros, status)
+                VALUES ($1, $2, $3, $5, $4, 'active')
                 RETURNING id
-            """, property_type, time_period, first_metro['id'], total_metros)
+            """, property_type, time_period, first_metro['id'], total_metros, source)
             
-            print(f"[PROGRESS] Создана сессия парсинга ID {session_id}, начинаем с метро ID {first_metro['id']} (CIAN ID: {first_metro['cian_id']})")
+            source_name = "CIAN" if source == 4 else "AVITO" if source == 1 else f"источник {source}"
+            print(f"[PROGRESS] Создана сессия парсинга ID {session_id} для {source_name}, начинаем с метро ID {first_metro['id']} (CIAN ID: {first_metro['cian_id']})")
             return session_id
             
         except Exception as e:
@@ -575,8 +577,8 @@ async def complete_parsing_session(session_id: int):
         except Exception as e:
             print(f"[PROGRESS] Ошибка завершения сессии: {e}")
 
-async def get_last_parsing_progress(property_type: int, time_period: int = None) -> dict:
-    """Получает последний прогресс парсинга для указанных параметров."""
+async def get_last_parsing_progress(property_type: int, time_period: int = None, source: int = 4) -> dict:
+    """Получает последний прогресс парсинга для указанных параметров. Ищет только по указанному source."""
     pool = await _get_cian_pool()
     async with pool.acquire() as conn:
         try:
@@ -585,24 +587,25 @@ async def get_last_parsing_progress(property_type: int, time_period: int = None)
                 progress = await conn.fetchrow("""
                     SELECT id, current_metro_id, total_metros, processed_metros, status
                     FROM system.parsing_progress 
-                    WHERE property_type = $1 AND time_period IS NULL
+                    WHERE property_type = $1 AND time_period IS NULL AND source = $2
                     ORDER BY time_upd DESC 
                     LIMIT 1
-                """, property_type)
+                """, property_type, source)
             else:
                 progress = await conn.fetchrow("""
                     SELECT id, current_metro_id, total_metros, processed_metros, status
-                    FROM system.parsing_progress 
-                    WHERE property_type = $1 AND time_period = $2
+                    WHERE property_type = $1 AND time_period = $2 AND source = $3
                     ORDER BY time_upd DESC 
                     LIMIT 1
-                """, property_type, time_period)
+                """, property_type, time_period, source)
             
             if progress:
-                print(f"[PROGRESS] Найден прогресс: сессия {progress['id']}, метро ID {progress['current_metro_id']}, статус: {progress['status']}")
+                source_name = "CIAN" if source == 4 else "AVITO" if source == 1 else f"источник {source}"
+                print(f"[PROGRESS] Найден прогресс для {source_name}: сессия {progress['id']}, метро ID {progress['current_metro_id']}, статус: {progress['status']}")
                 return dict(progress)
             else:
-                print(f"[PROGRESS] Прогресс не найден для property_type={property_type}, time_period={time_period}")
+                source_name = "CIAN" if source == 4 else "AVITO" if source == 1 else f"источник {source}"
+                print(f"[PROGRESS] Прогресс не найден для {source_name}, property_type={property_type}, time_period={time_period}")
                 return None
                 
         except Exception as e:

@@ -556,6 +556,35 @@ class EnhancedMetroParser:
         print(f"[CONTEXT] Страница {page}: сгенерирован новый context")
         return metro_url
     
+    def wait_for_dom_stability(self):
+        """Ждет стабилизации DOM после загрузки страницы (без таймаута)"""
+        try:
+            print("⏳ Ждем стабилизации DOM...")
+            
+            # Ждем полной загрузки страницы
+            while True:
+                ready_state = self.driver.execute_script("return document.readyState")
+                if ready_state == "complete":
+                    break
+                time.sleep(0.1)  # Короткая пауза
+            
+            # Дополнительная пауза для JavaScript и динамического контента
+            time.sleep(1)
+            
+            # Ждем появления первых карточек
+            while True:
+                cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                if cards:
+                    break
+                time.sleep(0.1)  # Короткая пауза
+            
+            print("✅ DOM стабилизирован, карточки загружены")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Ошибка ожидания стабилизации DOM: {e}")
+            return False
+
     def wait_for_cards_load(self, timeout=30):
         """Ждет загрузки карточек или определяет, что страница пустая"""
         try:
@@ -2294,10 +2323,14 @@ class EnhancedMetroParser:
             
             # Переходим на страницу
             self.driver.get(metro_url)
-            time.sleep(self.page_load_delay)
             
             # Выводим сообщение о обработке страницы
             print(f"страница {page} ({metro_url}) обработана")
+            
+            # Ждем стабилизации DOM после загрузки страницы
+            if not self.wait_for_dom_stability():
+                print(f"❌ Не удалось дождаться стабилизации DOM на странице {page}")
+                return []
             
             # Ждем загрузки карточек
             if not self.wait_for_cards_load():
