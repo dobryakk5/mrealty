@@ -884,6 +884,7 @@ class EnhancedMetroParser:
                     while retry_count < max_retries and not card_parsed:
                         try:
                             print(f"      🔄 Попытка {retry_count + 1}/{max_retries} для карточки {i+1}")
+                            print(f"         📍 Начинаем парсинг...")
                             
                             # Получаем свежие элементы перед каждой попыткой (как в старом скрипте)
                             fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
@@ -905,7 +906,7 @@ class EnhancedMetroParser:
                                     card_parsed = True
                                     
                                     # ОСОБЕННОСТЬ: Для первой карточки делаем дополнительный парсинг
-                                    if i == 0 and retry_count == 0:
+                                    if i == 0:
                                         print("      🔄 Дополнительный парсинг первой карточки для надежности...")
                                         try:
                                             # Получаем свежие элементы снова
@@ -931,10 +932,13 @@ class EnhancedMetroParser:
                             error_msg = str(e).lower()
                             retry_count += 1
                             
+                            print(f"   🔄 Попытка {retry_count}/{max_retries} для карточки {i+1} завершилась с ошибкой")
+                            print(f"      Тип ошибки: {type(e).__name__}")
+                            print(f"      Сообщение: {str(e)[:100]}...")
+                            
                             # Проверяем на stale element и другие ошибки, которые можно повторить
                             if ('stale element' in error_msg or 'element not found' in error_msg or 'timeout' in error_msg) and retry_count < max_retries:
                                 print(f"   🔄 Ошибка для карточки {i+1}, пробуем еще раз... (попытка {retry_count}/{max_retries})")
-                                print(f"      Ошибка: {str(e)[:100]}...")
                                 time.sleep(0.5)  # Пауза как в старом скрипте
                                 continue
                             else:
