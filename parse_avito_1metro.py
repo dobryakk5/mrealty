@@ -909,25 +909,75 @@ class EnhancedMetroParser:
                             
                             card = fresh_cards[i]
                             
-                            # ДИАГНОСТИКА: Проверяем содержимое первой карточки
-                            if i == 0:
+                            # ВАЖНО: Немедленно получаем все нужные данные из элемента, пока он не стал stale
+                            try:
+                                # Получаем основные данные сразу после получения элемента
+                                item_id = card.get_attribute('data-item-id')
+                                title_text = ""
+                                price_text = ""
+                                address_text = ""
+                                
                                 try:
-                                    card_text = card.text.strip()[:200]  # Первые 200 символов
-                                    print(f"         📝 Содержимое первой карточки: {card_text}...")
-                                except Exception as text_error:
-                                    print(f"         ❌ Не удалось получить текст первой карточки: {text_error}")
-                            
-                            # Пытаемся спарсить карточку - если элемент stale, то catch перехватит ошибку
-                            card_data = self.parse_card(card)
-                            if card_data:
-                                card_data['card_number'] = i + 1
-                                card_data['raw_text'] = card.text.strip()
-                                parsed_cards.append(card_data)
-                                print(f"   ✅ Спарсена карточка {i+1} (потоково)")
-                                card_parsed = True
-                            else:
-                                print(f"   ⚠️ Карточка {i+1} не дала данных")
-                                break  # Если карточка не дала данных, не повторяем
+                                    title_elem = card.find_element(By.CSS_SELECTOR, '[data-marker="item-title"]')
+                                    title_text = title_elem.text.strip()
+                                except:
+                                    title_text = "Не найдено"
+                                
+                                try:
+                                    price_elem = card.find_element(By.CSS_SELECTOR, '[data-marker="item-price"]')
+                                    price_text = price_elem.text.strip()
+                                except:
+                                    price_text = "Не найдено"
+                                
+                                try:
+                                    address_elem = card.find_element(By.CSS_SELECTOR, '[data-marker="item-address"]')
+                                    address_text = address_elem.text.strip()
+                                except:
+                                    address_text = "Не найдено"
+                                
+                                # ДИАГНОСТИКА: Проверяем содержимое первой карточки
+                                if i == 0:
+                                    print(f"         📝 ID: {item_id}")
+                                    print(f"         📝 Заголовок: {title_text[:50]}...")
+                                    print(f"         📝 Цена: {price_text}")
+                                    print(f"         📝 Адрес: {address_text[:50]}...")
+                                
+                                # Создаем базовую структуру данных
+                                card_data = {
+                                    'item_id': item_id,
+                                    'title': title_text,
+                                    'price': price_text,
+                                    'address': address_text
+                                }
+                                
+                                # Если есть базовые данные, считаем карточку успешной
+                                if item_id or title_text or price_text:
+                                    card_data['card_number'] = i + 1
+                                    card_data['raw_text'] = f"{title_text} {price_text} {address_text}"
+                                    parsed_cards.append(card_data)
+                                    print(f"   ✅ Спарсена карточка {i+1} (потоково)")
+                                    card_parsed = True
+                                else:
+                                    print(f"   ⚠️ Карточка {i+1} не дала данных")
+                                    break
+                                    
+                            except Exception as data_error:
+                                print(f"         ❌ Ошибка получения данных карточки {i+1}: {data_error}")
+                                # Продолжаем с обычным parse_card как fallback
+                                try:
+                                    card_data = self.parse_card(card)
+                                    if card_data:
+                                        card_data['card_number'] = i + 1
+                                        card_data['raw_text'] = card.text.strip()
+                                        parsed_cards.append(card_data)
+                                        print(f"   ✅ Спарсена карточка {i+1} (потоково, fallback)")
+                                        card_parsed = True
+                                    else:
+                                        print(f"   ⚠️ Карточка {i+1} не дала данных (fallback)")
+                                        break
+                                except Exception as fallback_error:
+                                    print(f"         ❌ Fallback тоже не сработал: {fallback_error}")
+                                    break
                                         
                         except Exception as e:
                             error_msg = str(e).lower()
