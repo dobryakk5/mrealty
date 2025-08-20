@@ -578,22 +578,8 @@ class EnhancedMetroParser:
                     break
                 time.sleep(0.1)  # Короткая пауза
             
-            # ДОПОЛНИТЕЛЬНАЯ пауза для стабилизации первых карточек
+            # ДОПОЛНИТЕЛЬНАЯ пауза для стабилизации
             time.sleep(0.5)
-            
-            # СПЕЦИАЛЬНАЯ проверка для первой карточки (она часто stale)
-            try:
-                first_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                if first_cards:
-                    # Проверяем доступность первой карточки
-                    first_card = first_cards[0]
-                    first_card.is_enabled()  # Проверка на stale
-                    print("✅ Первая карточка стабильна")
-                else:
-                    print("⚠️ Карточки не найдены при проверке стабильности")
-            except Exception as e:
-                print(f"⚠️ Первая карточка нестабильна, добавляем дополнительную паузу: {e}")
-                time.sleep(1)  # Дополнительная пауза для стабилизации
             
             print("✅ DOM стабилизирован, карточки загружены")
             return True
@@ -759,53 +745,16 @@ class EnhancedMetroParser:
                         # Пакетно парсим все карточки группы
                         for j, card in group_cards:
                             try:
-                                # СПЕЦИАЛЬНАЯ обработка для первой карточки (j == 0)
-                                if j == 0:
-                                    # Усиленный retry для первой карточки
-                                    first_card_retries = 5
-                                    first_card_success = False
-                                    
-                                    for retry in range(first_card_retries):
-                                        try:
-                                            # Получаем свежую первую карточку
-                                            fresh_first_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                                            if fresh_first_cards:
-                                                fresh_first_card = fresh_first_cards[0]
-                                                card_data = self.parse_card(fresh_first_card)
-                                                if card_data:
-                                                    card_data['card_number'] = j + 1
-                                                    card_data['raw_text'] = fresh_first_card.text.strip()
-                                                    parsed_cards.append(card_data)
-                                                    group_parsed_count += 1
-                                                    print(f"   ✅ Спарсена карточка {j+1} (всего: {len(parsed_cards)}) [попытка {retry+1}]")
-                                                    first_card_success = True
-                                                    break
-                                                else:
-                                                    print(f"   ⚠️ Первая карточка не дала данных (попытка {retry+1})")
-                                            else:
-                                                print(f"   ⚠️ Первая карточка недоступна (попытка {retry+1})")
-                                        except Exception as first_e:
-                                            if retry < first_card_retries - 1:
-                                                print(f"   🔄 Повтор первой карточки (попытка {retry+1}/{first_card_retries}): {first_e}")
-                                                time.sleep(0.3)
-                                                continue
-                                            else:
-                                                print(f"   ❌ Первая карточка пропущена после {first_card_retries} попыток: {first_e}")
-                                                break
-                                    
-                                    if not first_card_success:
-                                        print(f"   ⏹️ Первая карточка окончательно пропущена")
+                                # Обычная обработка для всех карточек
+                                card_data = self.parse_card(card)
+                                if card_data:
+                                    card_data['card_number'] = j + 1  # Правильная нумерация по позиции
+                                    card_data['raw_text'] = card.text.strip()
+                                    parsed_cards.append(card_data)
+                                    group_parsed_count += 1
+                                    print(f"   ✅ Спарсена карточка {j+1} (всего: {len(parsed_cards)})")
                                 else:
-                                    # Обычная обработка для остальных карточек
-                                    card_data = self.parse_card(card)
-                                    if card_data:
-                                        card_data['card_number'] = j + 1  # Правильная нумерация по позиции
-                                        card_data['raw_text'] = card.text.strip()
-                                        parsed_cards.append(card_data)
-                                        group_parsed_count += 1
-                                        print(f"   ✅ Спарсена карточка {j+1} (всего: {len(parsed_cards)})")
-                                    else:
-                                        print(f"   ⚠️ Карточка {j+1} не дала данных")
+                                    print(f"   ⚠️ Карточка {j+1} не дала данных")
                                         
                             except Exception as e:
                                 print(f"   ❌ Ошибка карточки {j+1}: {e}")
@@ -833,6 +782,61 @@ class EnhancedMetroParser:
         except Exception as e:
             print(f"❌ Ошибка парсинга всех карточек: {e}")
             return parsed_cards if 'parsed_cards' in locals() else []
+    
+    def parse_full_page_with_elements(self, cards_elements, target_cards=50):
+        """Парсит все карточки на странице используя уже полученные элементы (без повторного поиска)"""
+        try:
+            print(f"🎯 Парсим страницу с уже полученными элементами")
+            
+            total_cards = len(cards_elements)
+            print(f"📊 Всего карточек на странице: {total_cards}")
+            
+            # Ограничиваем количество карточек для парсинга
+            cards_to_parse = min(target_cards, total_cards)
+            print(f"🎯 Будем парсить карточек: {cards_to_parse}")
+            
+            parsed_cards = []
+            
+            # Парсим карточки по 5 за раз (без retry логики, так как элементы уже получены)
+            for i in range(0, cards_to_parse, 5):  # Шаг 5: 0, 5, 10, 15...
+                # Определяем диапазон для текущей группы (5 карточек)
+                start_idx = i
+                end_idx = min(i + 5, cards_to_parse)
+                group_size = end_idx - start_idx
+                
+                print(f"🔄 Парсим группу карточек {start_idx+1}-{end_idx} ({group_size} карточек)...")
+                
+                # Пакетно парсим все карточки группы
+                group_parsed_count = 0
+                for j in range(start_idx, end_idx):
+                    try:
+                        if j >= len(cards_elements):
+                            print(f"⚠️ Карточка {j+1} недоступна, пропускаем")
+                            continue
+                            
+                        card = cards_elements[j]
+                        card_data = self.parse_card(card)
+                        if card_data:
+                            card_data['card_number'] = j + 1  # Правильная нумерация по позиции
+                            card_data['raw_text'] = card.text.strip()
+                            parsed_cards.append(card_data)
+                            group_parsed_count += 1
+                            print(f"   ✅ Спарсена карточка {j+1} (всего: {len(parsed_cards)})")
+                        else:
+                            print(f"   ⚠️ Карточка {j+1} не дала данных")
+                                    
+                    except Exception as e:
+                        print(f"   ❌ Ошибка карточки {j+1}: {e}")
+                        continue
+                
+                print(f"✅ Группа {start_idx+1}-{end_idx} завершена: +{group_parsed_count} карточек ({len(parsed_cards)} всего)")
+            
+            print(f"✅ Парсинг завершен: {len(parsed_cards)} карточек из {cards_to_parse}")
+            return parsed_cards
+            
+        except Exception as e:
+            print(f"❌ Ошибка парсинга с готовыми элементами: {e}")
+            return []
     
     def parse_card_with_schema(self, card_element):
         """Парсит карточку используя Schema.org разметку"""
@@ -2399,8 +2403,8 @@ class EnhancedMetroParser:
             else:
                 target_cards = 50  # Если max_cards = 0, парсим все 50 карточек
             
-            # Парсинг всей страницы сразу
-            parsed_cards = self.parse_full_page(target_cards)
+            # Парсинг всей страницы сразу - передаем уже полученные элементы
+            parsed_cards = self.parse_full_page_with_elements(cards, target_cards)
             
             # Добавляем номер страницы к каждой карточке
             for card_data in parsed_cards:

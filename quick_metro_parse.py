@@ -15,10 +15,10 @@ from parse_avito_1metro import EnhancedMetroParser
 # =============================================================================
 
 # Метро по умолчанию (ID из таблицы metro)
-DEFAULT_METRO_ID = 2
+DEFAULT_METRO_ID = 1
 
 # Количество страниц по умолчанию (0 = все страницы)
-DEFAULT_MAX_PAGES = 0
+DEFAULT_MAX_PAGES = 2
 
 # Количество карточек на странице по умолчанию (0 = все карточки)
 DEFAULT_MAX_CARDS = 0
