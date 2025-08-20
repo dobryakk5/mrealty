@@ -63,16 +63,29 @@ class MetroBatchParser:
             conn = await asyncpg.connect(self.database_url)
             
             # Получаем все метро Москвы (is_msk is not false)
-            if exclude_ids:
-                exclude_placeholders = ','.join([f'${i+2}' for i in range(len(exclude_ids))])
-                query = f"""
-                    SELECT id, name, avito_id 
-                    FROM metro 
-                    WHERE is_msk IS NOT FALSE 
-                    AND id NOT IN ({exclude_placeholders})
-                    ORDER BY id
-                """
-                result = await conn.fetch(query, *exclude_ids)
+            if exclude_ids and len(exclude_ids) > 0:
+                # Проверяем, что список не пустой
+                if len(exclude_ids) == 0:
+                    query = """
+                        SELECT id, name, avito_id 
+                        FROM metro 
+                        WHERE is_msk IS NOT FALSE 
+                        ORDER BY id
+                    """
+                    print(f"🔍 SQL запрос без исключений (пустой список): {query}")
+                    result = await conn.fetch(query)
+                else:
+                    exclude_placeholders = ','.join([f'${i+1}' for i in range(len(exclude_ids))])
+                    query = f"""
+                        SELECT id, name, avito_id 
+                        FROM metro 
+                        WHERE is_msk IS NOT FALSE 
+                        AND id NOT IN ({exclude_placeholders})
+                        ORDER BY id
+                    """
+                    print(f"🔍 SQL запрос с исключением: {query}")
+                    print(f"🔍 Параметры исключения: {exclude_ids}")
+                    result = await conn.fetch(query, *exclude_ids)
             else:
                 query = """
                     SELECT id, name, avito_id 
@@ -80,6 +93,7 @@ class MetroBatchParser:
                     WHERE is_msk IS NOT FALSE 
                     ORDER BY id
                 """
+                print(f"🔍 SQL запрос без исключений: {query}")
                 result = await conn.fetch(query)
             
             await conn.close()
@@ -92,10 +106,14 @@ class MetroBatchParser:
                     'avito_id': row['avito_id']
                 })
             
+            print(f"✅ Найдено {len(metro_list)} метро в БД")
             return metro_list
             
         except Exception as e:
             print(f"❌ Ошибка получения списка метро: {e}")
+            print(f"🔍 Тип ошибки: {type(e).__name__}")
+            if hasattr(e, '__cause__') and e.__cause__:
+                print(f"🔍 Причина: {e.__cause__}")
             return []
     
     async def get_specific_metro_list(self, metro_ids):
@@ -271,6 +289,8 @@ async def main():
             # Все метро с исключением
             exclude_ids = [int(x.strip()) for x in args.exclude.split(',')]
             print(f"🎯 Парсинг всех метро Москвы, исключая: {exclude_ids}")
+            print(f"🔍 Тип exclude_ids: {type(exclude_ids)}, длина: {len(exclude_ids)}")
+            print(f"🔍 Значения: {exclude_ids}")
             metro_list = await batch_parser.get_moscow_metro_list(exclude_ids)
             
         else:
