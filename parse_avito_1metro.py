@@ -874,24 +874,49 @@ class EnhancedMetroParser:
                 print(f"🔄 ЭТАП 1: Парсим первые {stream_count} карточек потоково...")
                 
                 for i in range(stream_count):
-                    try:
-                        if i >= len(cards_elements):
-                            print(f"⚠️ Карточка {i+1} недоступна, пропускаем")
-                            continue
+                    max_retries = 3  # Максимальное количество попыток для каждой карточки
+                    retry_count = 0
+                    card_parsed = False
+                    
+                    while retry_count < max_retries and not card_parsed:
+                        try:
+                            if i >= len(cards_elements):
+                                print(f"⚠️ Карточка {i+1} недоступна, пропускаем")
+                                break
+                                
+                            # Получаем свежие элементы перед каждой попыткой
+                            fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                            if i >= len(fresh_cards):
+                                print(f"⚠️ Карточка {i+1} недоступна в свежих элементах, пропускаем")
+                                break
                             
-                        card = cards_elements[i]
-                        card_data = self.parse_card(card)
-                        if card_data:
-                            card_data['card_number'] = i + 1
-                            card_data['raw_text'] = card.text.strip()
-                            parsed_cards.append(card_data)
-                            print(f"   ✅ Спарсена карточка {i+1} (потоково)")
-                        else:
-                            print(f"   ⚠️ Карточка {i+1} не дала данных")
-                                    
-                    except Exception as e:
-                        print(f"   ❌ Ошибка карточки {i+1}: {e}")
-                        continue
+                            card = fresh_cards[i]
+                            card_data = self.parse_card(card)
+                            if card_data:
+                                card_data['card_number'] = i + 1
+                                card_data['raw_text'] = card.text.strip()
+                                parsed_cards.append(card_data)
+                                print(f"   ✅ Спарсена карточка {i+1} (потоково)")
+                                card_parsed = True
+                            else:
+                                print(f"   ⚠️ Карточка {i+1} не дала данных")
+                                break  # Если карточка не дала данных, не повторяем
+                                        
+                        except Exception as e:
+                            error_msg = str(e).lower()
+                            retry_count += 1
+                            
+                            if 'stale element' in error_msg and retry_count < max_retries:
+                                print(f"   🔄 Stale element для карточки {i+1}, пробуем еще раз... (попытка {retry_count}/{max_retries})")
+                                time.sleep(0.5)  # Небольшая пауза перед повторной попыткой
+                                continue
+                            else:
+                                print(f"   ❌ Ошибка карточки {i+1}: {e}")
+                                break
+                    
+                    # Если карточка не была спарсена после всех попыток
+                    if not card_parsed:
+                        print(f"   ❌ Карточка {i+1} не удалась после {max_retries} попыток")
                 
                 print(f"✅ ЭТАП 1 завершен: {len(parsed_cards)} карточек")
             
