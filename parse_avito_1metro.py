@@ -895,32 +895,37 @@ class EnhancedMetroParser:
                             card = fresh_cards[i]
                             
                             # Парсим карточку как в старом скрипте
-                            card_data = self.parse_card(card)
-                            if card_data:
-                                card_data['card_number'] = i + 1
-                                card_data['raw_text'] = card.text.strip()
-                                parsed_cards.append(card_data)
-                                print(f"   ✅ Спарсена карточка {i+1} (потоково)")
-                                card_parsed = True
-                                
-                                # ОСОБЕННОСТЬ: Для первой карточки делаем дополнительный парсинг
-                                if i == 0 and retry_count == 0:
-                                    print("      🔄 Дополнительный парсинг первой карточки для надежности...")
-                                    try:
-                                        # Получаем свежие элементы снова
-                                        fresh_cards_2 = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                                        if len(fresh_cards_2) > 0:
-                                            card_2 = fresh_cards_2[0]
-                                            card_data_2 = self.parse_card(card_2)
-                                            if card_data_2:
-                                                print("      ✅ Дополнительный парсинг первой карточки успешен")
-                                            else:
-                                                print("      ⚠️ Дополнительный парсинг первой карточки не дал данных")
-                                    except Exception as extra_error:
-                                        print(f"      ⚠️ Ошибка дополнительного парсинга: {extra_error}")
-                            else:
-                                print(f"   ⚠️ Карточка {i+1} не дала данных")
-                                break
+                            try:
+                                card_data = self.parse_card(card)
+                                if card_data:
+                                    card_data['card_number'] = i + 1
+                                    card_data['raw_text'] = card.text.strip()
+                                    parsed_cards.append(card_data)
+                                    print(f"   ✅ Спарсена карточка {i+1} (потоково)")
+                                    card_parsed = True
+                                    
+                                    # ОСОБЕННОСТЬ: Для первой карточки делаем дополнительный парсинг
+                                    if i == 0 and retry_count == 0:
+                                        print("      🔄 Дополнительный парсинг первой карточки для надежности...")
+                                        try:
+                                            # Получаем свежие элементы снова
+                                            fresh_cards_2 = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                                            if len(fresh_cards_2) > 0:
+                                                card_2 = fresh_cards_2[0]
+                                                card_data_2 = self.parse_card(card_2)
+                                                if card_data_2:
+                                                    print("      ✅ Дополнительный парсинг первой карточки успешен")
+                                                else:
+                                                    print("      ⚠️ Дополнительный парсинг первой карточки не дал данных")
+                                        except Exception as extra_error:
+                                            print(f"      ⚠️ Ошибка дополнительного парсинга: {extra_error}")
+                                else:
+                                    print(f"   ⚠️ Карточка {i+1} не дала данных")
+                                    # НЕ делаем break - позволяем retry логике работать
+                                    raise Exception("Карточка не дала данных")
+                            except Exception as parse_error:
+                                # Если произошла ошибка при парсинге, выбрасываем исключение для retry
+                                raise parse_error
                                         
                         except Exception as e:
                             error_msg = str(e).lower()
