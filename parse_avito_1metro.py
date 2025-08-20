@@ -593,23 +593,13 @@ class EnhancedMetroParser:
         try:
             print("⏳ Проверяем загрузку карточек...")
             
-            # Используем таймаут из конфигурации или переданный параметр
-            actual_timeout = self.cards_load_timeout if hasattr(self, 'cards_load_timeout') else timeout
-            
             # Сначала проверяем, есть ли уже карточки на странице
             initial_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
             if initial_cards:
                 print(f"✅ Карточки уже загружены: {len(initial_cards)}")
                 return True
             
-            # Если карточек нет, ждем немного и проверяем снова
-            time.sleep(2)
-            cards_after_wait = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-            if cards_after_wait:
-                print(f"✅ Карточки загрузились после ожидания: {len(cards_after_wait)}")
-                return True
-            
-            # Если карточек все еще нет, проверяем, есть ли сообщение о пустой странице
+            # Если карточек нет, проверяем на пустую страницу
             page_text = self.driver.page_source.lower()
             empty_indicators = [
                 'объявлений не найдено',
@@ -623,7 +613,7 @@ class EnhancedMetroParser:
                 print("ℹ️ Страница пустая - объявлений не найдено")
                 return True  # Возвращаем True, чтобы корректно обработать пустую страницу
             
-            # Если ничего не нашли, считаем страницу загруженной (возможно, она действительно пустая)
+            # Если ничего не нашли, считаем страницу загруженной
             print("ℹ️ Карточки не найдены, но страница загружена")
             return True
             
@@ -698,100 +688,51 @@ class EnhancedMetroParser:
             except:
                 return 0
     
-    def stream_parse_cards(self, target_cards=20, scroll_pause=1.5):
-        """Потоковый парсинг: прокручивает и сразу парсит карточки"""
+    def parse_full_page(self, target_cards=50):
+        """Парсинг всей страницы сразу (без прокрутки)"""
         try:
-            if not self.enable_smooth_scroll:
-                print("⏭️ Потоковый парсинг отключен, используем обычный режим...")
-                return self.smooth_scroll_and_load_cards(target_cards, scroll_pause)
+            print(f"🔄 Парсим все карточки сразу (цель: {target_cards})...")
             
-            print("🔄 Начинаем потоковый парсинг карточек...")
+            # Получаем все доступные карточки
+            all_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+            total_cards = len(all_cards)
             
-            # Используем настройки из конфигурации
-            actual_scroll_pause = self.scroll_pause if hasattr(self, 'scroll_pause') else scroll_pause
-            max_attempts = target_cards * 2  # Увеличиваем лимит попыток в зависимости от цели
+            print(f"📊 Найдено карточек на странице: {total_cards}")
+            
+            if total_cards == 0:
+                print("⚠️ Карточки не найдены на странице")
+                return []
+            
+            # Ограничиваем количество карточек для парсинга
+            cards_to_parse = min(target_cards, total_cards)
+            print(f"🎯 Будем парсить карточек: {cards_to_parse}")
             
             parsed_cards = []
-            current_cards = 0
-            scroll_attempts = 0
-            last_parsed_index = -1
-            no_new_cards_attempts = 0  # Счетчик попыток без новых карточек
             
-            while len(parsed_cards) < target_cards and scroll_attempts < max_attempts and no_new_cards_attempts < 5:
+            # Парсим карточки по порядку
+            for i in range(cards_to_parse):
                 try:
-                    # Получаем текущее количество карточек
-                    cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                    new_cards_count = len(cards)
+                    card = all_cards[i]
+                    print(f"🔄 Парсим карточку {i+1}/{cards_to_parse}...")
                     
-                    # Парсим по две новые карточки за раз
-                    if new_cards_count > last_parsed_index + 2:
-                        # Берем две следующие неспарсенные карточки
-                        for offset in range(1, 3):  # Парсим карточки i+1 и i+2
-                            i = last_parsed_index + offset
-                            max_retries = 3
-                            retry_count = 0
-                            
-                            while retry_count < max_retries:
-                                try:
-                                    # Получаем свежие элементы перед каждой попыткой
-                                    fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                                    if i >= len(fresh_cards):
-                                        print(f"⚠️ Карточка {i+1} недоступна, пропускаем")
-                                        break
-                                    
-                                    card = fresh_cards[i]
-                                    card_data = self.parse_card(card)
-                                    if card_data:
-                                        card_data['card_number'] = len(parsed_cards) + 1
-                                        card_data['raw_text'] = card.text.strip()
-                                        parsed_cards.append(card_data)
-                                        print(f"✅ Спарсена карточка {len(parsed_cards)}")
-                                    
-                                    # Обновляем last_parsed_index только после успешного парсинга
-                                    if offset == 2:  # После парсинга второй карточки
-                                        last_parsed_index = i
-                                        no_new_cards_attempts = 0  # Сбрасываем счетчик
-                                    
-                                    break  # Успешно спарсили, выходим из retry цикла
-                                    
-                                except Exception as e:
-                                    error_msg = str(e).lower()
-                                    if 'stale element' in error_msg and retry_count < max_retries - 1:
-                                        print(f"🔄 Stale element для карточки {i+1}, пробуем еще раз... (попытка {retry_count + 1}/{max_retries})")
-                                        retry_count += 1
-                                        time.sleep(0.5)  # Небольшая пауза перед повторной попыткой
-                                        continue
-                                    else:
-                                        print(f"⚠️ Ошибка парсинга карточки {i+1}: {e}")
-                                        # Помечаем как обработанную только если это вторая карточка
-                                        if offset == 2:
-                                            last_parsed_index = i
-                                        break
+                    card_data = self.parse_card(card)
+                    if card_data:
+                        card_data['card_number'] = len(parsed_cards) + 1
+                        card_data['raw_text'] = card.text.strip()
+                        parsed_cards.append(card_data)
+                        print(f"✅ Спарсена карточка {len(parsed_cards)}")
                     else:
-                        # Нет новых карточек, увеличиваем счетчик
-                        no_new_cards_attempts += 1
-                        if no_new_cards_attempts >= 5:
-                            print(f"⏹️ Нет новых карточек после {no_new_cards_attempts} попыток, завершаем")
-                            break
-                    
-                    # Плавно прокручиваем вниз для поиска новых карточек
-                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                    
-                    # Проверяем, появились ли новые карточки
-                    new_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                    
-                    scroll_attempts += 1
-                    
+                        print(f"⚠️ Карточка {i+1} не дала данных")
+                        
                 except Exception as e:
-                    print(f"⚠️ Ошибка при потоковом парсинге: {e}")
-                    scroll_attempts += 1
+                    print(f"❌ Ошибка парсинга карточки {i+1}: {e}")
                     continue
             
-            print(f"✅ Потоковый парсинг завершен: {len(parsed_cards)} карточек")
+            print(f"✅ Парсинг завершен: {len(parsed_cards)} карточек из {cards_to_parse}")
             return parsed_cards
             
         except Exception as e:
-            print(f"❌ Ошибка потокового парсинга: {e}")
+            print(f"❌ Ошибка парсинга всех карточек: {e}")
             return parsed_cards if 'parsed_cards' in locals() else []
     
     def parse_card_with_schema(self, card_element):
@@ -2353,14 +2294,14 @@ class EnhancedMetroParser:
                 print(f"ℹ️ Страница {page} не содержит карточек")
                 return []
             
-            # Используем потоковый парсинг: прокручиваем и сразу парсим
+            # Парсим все доступные карточки сразу (без прокрутки)
             if self.max_cards > 0:
-                target_cards = self.max_cards
+                target_cards = min(self.max_cards, 50)  # Ограничиваем максимум 50
             else:
-                target_cards = 50  # Если max_cards = 0, загружаем все доступные карточки
+                target_cards = 50  # Если max_cards = 0, парсим все 50 карточек
             
-            # Потоковый парсинг карточек
-            parsed_cards = self.stream_parse_cards(target_cards)
+            # Парсинг всей страницы сразу
+            parsed_cards = self.parse_full_page(target_cards)
             
             # Добавляем номер страницы к каждой карточке
             for card_data in parsed_cards:
