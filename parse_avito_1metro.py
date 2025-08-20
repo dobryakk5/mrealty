@@ -709,24 +709,61 @@ class EnhancedMetroParser:
             
             parsed_cards = []
             
-            # Парсим карточки по порядку
-            for i in range(cards_to_parse):
-                try:
-                    card = all_cards[i]
-                    print(f"🔄 Парсим карточку {i+1}/{cards_to_parse}...")
-                    
-                    card_data = self.parse_card(card)
-                    if card_data:
-                        card_data['card_number'] = len(parsed_cards) + 1
-                        card_data['raw_text'] = card.text.strip()
-                        parsed_cards.append(card_data)
-                        print(f"✅ Спарсена карточка {len(parsed_cards)}")
-                    else:
-                        print(f"⚠️ Карточка {i+1} не дала данных")
+            # Парсим карточки по 5 за раз с retry логикой
+            for i in range(0, cards_to_parse, 5):  # Шаг 5: 0, 5, 10, 15...
+                # Retry логика для группы
+                max_group_retries = 3
+                group_retry_count = 0
+                group_success = False
+                
+                while group_retry_count < max_group_retries and not group_success:
+                    try:
+                        # КРИТИЧНО: Получаем СВЕЖИЕ элементы для каждой группы
+                        fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
                         
-                except Exception as e:
-                    print(f"❌ Ошибка парсинга карточки {i+1}: {e}")
-                    continue
+                        # Определяем диапазон для текущей группы (5 карточек)
+                        start_idx = i
+                        end_idx = min(i + 5, cards_to_parse)
+                        group_size = end_idx - start_idx
+                        
+                        if group_retry_count == 0:
+                            print(f"🔄 Парсим группу карточек {start_idx+1}-{end_idx} ({group_size} карточек)...")
+                        else:
+                            print(f"🔄 Повтор группы {start_idx+1}-{end_idx} (попытка {group_retry_count + 1}/{max_group_retries})...")
+                        
+                        # Парсим группу из 5 карточек
+                        group_parsed_count = 0
+                        for j in range(start_idx, end_idx):
+                            if j >= len(fresh_cards):
+                                print(f"⚠️ Карточка {j+1} недоступна, пропускаем")
+                                continue
+                            
+                            card = fresh_cards[j]
+                            card_data = self.parse_card(card)
+                            if card_data:
+                                card_data['card_number'] = len(parsed_cards) + 1
+                                card_data['raw_text'] = card.text.strip()
+                                parsed_cards.append(card_data)
+                                group_parsed_count += 1
+                                print(f"   ✅ Спарсена карточка {len(parsed_cards)}")
+                            else:
+                                print(f"   ⚠️ Карточка {j+1} не дала данных")
+                        
+                        print(f"✅ Группа {start_idx+1}-{end_idx} завершена: +{group_parsed_count} карточек ({len(parsed_cards)} всего)")
+                        group_success = True  # Группа успешно обработана
+                            
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if 'stale element' in error_msg and group_retry_count < max_group_retries - 1:
+                            print(f"🔄 Stale element в группе {start_idx+1}-{end_idx}, повторяем... (попытка {group_retry_count + 1}/{max_group_retries})")
+                            group_retry_count += 1
+                            time.sleep(0.5)  # Небольшая пауза перед повтором
+                            continue
+                        else:
+                            print(f"❌ Ошибка парсинга группы {start_idx+1}-{end_idx}: {e}")
+                            if group_retry_count >= max_group_retries - 1:
+                                print(f"⏹️ Группа {start_idx+1}-{end_idx} пропущена после {max_group_retries} попыток")
+                            break
             
             print(f"✅ Парсинг завершен: {len(parsed_cards)} карточек из {cards_to_parse}")
             return parsed_cards
