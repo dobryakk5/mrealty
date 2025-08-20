@@ -902,8 +902,10 @@ class EnhancedMetroParser:
                             error_msg = str(e).lower()
                             retry_count += 1
                             
-                            if 'stale element' in error_msg and retry_count < max_retries:
-                                print(f"   🔄 Stale element для карточки {i+1}, пробуем еще раз... (попытка {retry_count}/{max_retries})")
+                            # Проверяем на stale element и другие ошибки, которые можно повторить
+                            if ('stale element' in error_msg or 'element not found' in error_msg or 'timeout' in error_msg) and retry_count < max_retries:
+                                print(f"   🔄 Ошибка для карточки {i+1}, пробуем еще раз... (попытка {retry_count}/{max_retries})")
+                                print(f"      Ошибка: {str(e)[:100]}...")
                                 time.sleep(0.5)  # Небольшая пауза перед повторной попыткой
                                 continue
                             else:
@@ -952,7 +954,31 @@ class EnhancedMetroParser:
                                 print(f"   ⚠️ Карточка {j+1} не дала данных")
                                     
                         except Exception as e:
-                            print(f"   ❌ Ошибка карточки {j+1}: {e}")
+                            error_msg = str(e).lower()
+                            
+                            # Для пакетного парсинга тоже добавляем retry логику
+                            if 'stale element' in error_msg or 'element not found' in error_msg:
+                                print(f"   🔄 Stale element для карточки {j+1}, получаем свежие элементы...")
+                                try:
+                                    # Получаем свежие элементы и повторяем попытку
+                                    fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                                    if j < len(fresh_cards):
+                                        card = fresh_cards[j]
+                                        card_data = self.parse_card(card)
+                                        if card_data:
+                                            card_data['card_number'] = j + 1
+                                            card_data['raw_text'] = card.text.strip()
+                                            parsed_cards.append(card_data)
+                                            group_parsed_count += 1
+                                            print(f"   ✅ Спарсена карточка {j+1} (пачкой, после retry)")
+                                        else:
+                                            print(f"   ⚠️ Карточка {j+1} не дала данных после retry")
+                                    else:
+                                        print(f"   ❌ Карточка {j+1} недоступна после retry")
+                                except Exception as retry_error:
+                                    print(f"   ❌ Ошибка retry для карточки {j+1}: {retry_error}")
+                            else:
+                                print(f"   ❌ Ошибка карточки {j+1}: {e}")
                             continue
                     
                     print(f"✅ Группа {start_idx+1}-{end_idx} завершена: +{group_parsed_count} карточек ({len(parsed_cards)} всего)")
@@ -2091,13 +2117,13 @@ class EnhancedMetroParser:
     def parse_card(self, card_element):
         """Парсит одну карточку"""
         try:
-            # Дополнительная проверка на stale element
-            try:
-                # Проверяем, что элемент все еще привязан к DOM
-                card_element.is_enabled()
-            except Exception as stale_error:
-                print(f"❌ Элемент карточки стал недействительным (stale): {stale_error}")
-                return None
+            # Убираем проверку на stale element - пусть retry логика работает
+            # try:
+            #     # Проверяем, что элемент все еще привязан к DOM
+            #     card_element.is_enabled()
+            # except Exception as stale_error:
+            #     print(f"❌ Элемент карточки стал недействительным (stale): {stale_error}")
+            #     return None
             
             card_data = {}
             
