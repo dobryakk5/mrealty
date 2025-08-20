@@ -707,7 +707,6 @@ class EnhancedMetroParser:
                                     break
                                 
                                 card = fresh_cards[i]
-                                print(f"🔄 Парсим карточку {i+1}...")
                                 card_data = self.parse_card(card)
                                 if card_data:
                                     card_data['card_number'] = len(parsed_cards) + 1
@@ -933,12 +932,9 @@ class EnhancedMetroParser:
             # Комплекс (берем из complex_name если есть)
             db_data['complex'] = card_data.get('complex_name', '')
             
-            # Метро - берем только первую часть до запятой
-            metro_name = card_data.get('metro_name', '')
-            if metro_name and ',' in metro_name:
-                db_data['metro'] = metro_name.split(',')[0].strip()
-            else:
-                db_data['metro'] = metro_name
+            # Метро - НЕ сохраняем название в БД, только metro_id
+            # Название метро остается в card_data для внутренней логики
+            # db_data['metro'] = None  # Убираем название метро из БД
             
             # ID метро из таблицы metro (добавляем для связи с таблицей metro)
             db_data['metro_id'] = self.metro_id
