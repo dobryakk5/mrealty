@@ -1,6 +1,6 @@
 # text_handlers.py
 from aiogram.types import Message, BufferedInputFile
-from listings_processor import export_listings_to_excel, generate_html_gallery, extract_urls
+from listings_processor import export_listings_to_excel, generate_html_gallery, generate_html_gallery_embedded, extract_urls
 import io
 
 async def handle_text_message(message: Message):
@@ -11,6 +11,9 @@ async def handle_text_message(message: Message):
     # Проверяем, содержит ли сообщение "подбор" (в любом месте)
     is_selection_request = "подбор" in text.lower()
     
+    # Проверяем, хочет ли пользователь встроенные изображения
+    use_embedded = "встроенные" in text.lower() or "встроить" in text.lower()
+    
     # Извлекаем URL из текста
     urls, url_count = extract_urls(text)
     
@@ -18,7 +21,8 @@ async def handle_text_message(message: Message):
         await message.answer(
             "📋 Отправьте ссылки на объявления CIAN для анализа.\n\n"
             "💡 Для получения Excel-отчета просто отправьте ссылки.\n"
-            "🖼️ Для просмотра фотографий напишите 'подбор' + ссылки."
+            "🖼️ Для просмотра фотографий напишите 'подбор' + ссылки.\n"
+            "🔗 Для встроенных фото: 'подбор встроенные' + ссылки."
         )
         return
     
@@ -50,23 +54,32 @@ async def handle_text_message(message: Message):
                 else:
                     # Если ссылки не найдены, берем весь текст после "подбор"
                     subtitle = text_after_podbor
+                
+                # Убираем слова "встроенные" и "встроить" из подзаголовка
+                if subtitle:
+                    subtitle = subtitle.replace("встроенные", "").replace("встроить", "").strip()
             
-            await message.answer("🖼️ Генерирую подбор с фотографиями...")
-            
-            html_content = generate_html_gallery(urls, message.from_user.id, subtitle)
+            if use_embedded:
+                await message.answer("🔗 Генерирую подбор с встроенными фотографиями...")
+                html_content = generate_html_gallery_embedded(urls, message.from_user.id, subtitle)
+                filename = f"подбор_встроенные_фото_{message.from_user.id}.html"
+                caption = f"🏠 Подбор недвижимости (встроенные фото)\n📊 Количество объявлений: {url_count}\n📁 Формат: HTML с встроенными изображениями"
+            else:
+                await message.answer("🖼️ Генерирую подбор с фотографиями...")
+                html_content = generate_html_gallery(urls, message.from_user.id, subtitle)
+                filename = f"подбор_недвижимости_{message.from_user.id}.html"
+                caption = f"🏠 Подбор недвижимости\n📊 Количество объявлений: {url_count}\n📁 Формат: HTML (откройте в браузере для просмотра)"
             
             # Создаем файл для отправки
             html_file = io.BytesIO(html_content.encode('utf-8'))
-            html_file.name = f"подбор_недвижимости_{message.from_user.id}.html"
+            html_file.name = filename
             
             # Используем BufferedInputFile для корректной отправки
-            input_file = BufferedInputFile(html_file.getvalue(), filename=f"подбор_недвижимости_{message.from_user.id}.html")
+            input_file = BufferedInputFile(html_file.getvalue(), filename=filename)
             
             await message.answer_document(
                 input_file,
-                caption=f"🏠 Подбор недвижимости\n"
-                       f"📊 Количество объявлений: {url_count}\n"
-                       f"📁 Формат: HTML (откройте в браузере для просмотра)"
+                caption=caption
             )
             
         else:

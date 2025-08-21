@@ -480,11 +480,46 @@ def generate_html_gallery(listing_urls: list[str], user_id: int, subtitle: str =
                 border-radius: 5px; 
                 border: 2px solid transparent;
                 transition: border-color 0.2s;
+                background: #f8f9fa;
             }
             .photo-item img:hover { 
                 border-color: #0066cc;
             }
+            .photo-fallback { 
+                width: 100%; 
+                height: 140px; 
+                display: flex; 
+                flex-direction: column; 
+                justify-content: center; 
+                align-items: center;
+            }
             .no-photos { color: #666; font-style: italic; }
+            .photo-info { 
+                background: #f8f9fa; 
+                padding: 15px; 
+                border-radius: 8px; 
+                margin-top: 15px; 
+                font-size: 14px;
+                border-left: 4px solid #0066cc;
+            }
+            .photo-info strong { color: #333; }
+            .photo-info small { line-height: 1.4; }
+            
+            /* Мобильная адаптация */
+            @media (max-width: 768px) {
+                body { margin: 10px; }
+                .listing { padding: 15px; margin: 15px 0; }
+                .photo-grid { 
+                    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); 
+                    gap: 6px; 
+                    padding: 8px;
+                }
+                .photo-item img, .photo-fallback { 
+                    height: 120px; 
+                }
+                .main-title { font-size: 24px; }
+                .subtitle { font-size: 16px; }
+            }
         </style>
     </head>
     <body>
@@ -537,10 +572,222 @@ def generate_html_gallery(listing_urls: list[str], user_id: int, subtitle: str =
                 for j, photo_url in enumerate(photo_urls):  # Показываем ВСЕ фотографии
                     html_parts.append(f"""
                     <div class="photo-item">
-                        <img src="{photo_url}" alt="Фото {j+1}">
+                        <img src="{photo_url}" alt="Фото {j+1}" 
+                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+                             loading="lazy">
+                        <div class="photo-fallback" style="display: none; background: #f0f0f0; border: 1px dashed #ccc; border-radius: 5px; padding: 20px; text-align: center; color: #666;">
+                            <div>📷 Фото {j+1}</div>
+                            <div style="font-size: 12px; margin-top: 5px;">
+                                <a href="{photo_url}" target="_blank" style="color: #0066cc;">Открыть фото</a>
+                            </div>
+                        </div>
                     </div>
                     """)
                 html_parts.append('</div>')
+                
+                # Добавляем информацию о проблемах с фото
+                html_parts.append(f"""
+                <div class="photo-info" style="background: #f8f9fa; padding: 10px; border-radius: 5px; margin-top: 15px; font-size: 14px;">
+                    <strong>📸 Фотографии:</strong> найдено {len(photo_urls)} фото
+                    <br><small style="color: #666;">
+                        💡 Если фото не отображаются, попробуйте:
+                        <br>• Открыть файл в браузере на компьютере
+                        <br>• Нажать на ссылку "Открыть фото" под каждым изображением
+                        <br>• Проверить интернет-соединение
+                    </small>
+                </div>
+                """)
+            else:
+                html_parts.append('<p class="no-photos">📷 Фотографии не найдены</p>')
+            
+            html_parts.append('</div>')
+            
+        except Exception as e:
+            html_parts.append(f"""
+            <div class="listing">
+                <h3>Вариант #{i}</h3>
+                <p style="color: red;">Ошибка при парсинге: {str(e)}</p>
+            </div>
+            """)
+    
+    html_parts.append("""
+    </body>
+    </html>
+    """)
+    
+    return ''.join(html_parts)
+
+def generate_html_gallery_embedded(listing_urls: list[str], user_id: int, subtitle: str = None) -> str:
+    """
+    Генерирует HTML документ с встроенными изображениями в base64 для лучшей совместимости
+    """
+    sess = requests.Session()
+    html_parts = []
+    
+    html_parts.append("""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Подбор недвижимости (встроенные фото)</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+            .listing { background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .listing h3 { color: #333; margin-top: 0; margin-bottom: 15px; }
+            .listing p { margin: 8px 0; color: #555; }
+            .listing strong { color: #333; }
+            .main-title { color: #333; margin-bottom: 10px; }
+            .subtitle { color: #666; font-size: 18px; margin-bottom: 30px; font-style: italic; }
+            .photo-grid { 
+                display: grid; 
+                grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); 
+                gap: 8px; 
+                margin: 15px 0; 
+                max-height: 600px; 
+                overflow-y: auto; 
+                padding: 10px;
+                border: 1px solid #eee;
+                border-radius: 8px;
+            }
+            .photo-item { position: relative; }
+            .photo-item img { 
+                width: 100%; 
+                height: 140px; 
+                object-fit: cover; 
+                border-radius: 5px; 
+                border: 2px solid transparent;
+                transition: border-color 0.2s;
+            }
+            .photo-item img:hover { 
+                border-color: #0066cc;
+            }
+            .no-photos { color: #666; font-style: italic; }
+            .photo-info { 
+                background: #f8f9fa; 
+                padding: 15px; 
+                border-radius: 8px; 
+                margin-top: 15px; 
+                font-size: 14px;
+                border-left: 4px solid #0066cc;
+            }
+            .photo-info strong { color: #333; }
+            
+            /* Мобильная адаптация */
+            @media (max-width: 768px) {
+                body { margin: 10px; }
+                .listing { padding: 15px; margin: 15px 0; }
+                .photo-grid { 
+                    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); 
+                    gap: 6px; 
+                    padding: 8px;
+                }
+                .photo-item img { 
+                    height: 120px; 
+                }
+                .main-title { font-size: 24px; }
+                .subtitle { font-size: 16px; }
+            }
+        </style>
+    </head>
+    <body>
+        <h1 class="main-title">🏠 Подбор недвижимости (встроенные фото)</h1>
+    """)
+    
+    # Добавляем подзаголовок, если он есть
+    if subtitle and subtitle.strip():
+        html_parts.append(f'<h2 class="subtitle">{subtitle.strip()}</h2>')
+    
+    for i, url in enumerate(listing_urls, 1):
+        try:
+            # Парсим объявление
+            listing_data = parse_listing(url, sess)
+            
+            # Извлекаем фотографии
+            soup = BeautifulSoup(requests.get(url, headers=HEADERS).text, 'html.parser')
+            photo_urls = extract_photo_urls(soup)
+            
+            html_parts.append(f"""
+            <div class="listing">
+                <h3>Вариант #{i}</h3>
+            """)
+            
+            # Добавляем основную информацию
+            if 'Комнат' in listing_data and listing_data['Комнат']:
+                html_parts.append(f"<p><strong>Комнат:</strong> {listing_data['Комнат']}</p>")
+            if 'Цена_raw' in listing_data and listing_data['Цена_raw']:
+                html_parts.append(f"<p><strong>Цена:</strong> {listing_data['Цена_raw']:,} ₽</p>")
+            
+            # Добавляем этаж/этажность
+            if 'Этаж' in listing_data and listing_data['Этаж']:
+                html_parts.append(f"<p><strong>Этаж:</strong> {listing_data['Этаж']}</p>")
+            
+            # Добавляем метраж общий
+            if 'Общая площадь' in listing_data and listing_data['Общая площадь']:
+                html_parts.append(f"<p><strong>Общая площадь:</strong> {listing_data['Общая площадь']} м²</p>")
+            
+            # Добавляем кухню
+            if 'Площадь кухни' in listing_data and listing_data['Площадь кухни']:
+                html_parts.append(f"<p><strong>Кухня:</strong> {listing_data['Площадь кухни']} м²</p>")
+            
+            # Переименовываем "Метро" в "Минут до метро"
+            if 'Минут метро' in listing_data and listing_data['Минут метро']:
+                html_parts.append(f"<p><strong>Минут до метро:</strong> {listing_data['Минут метро']}</p>")
+            
+            # Добавляем фотографии (встроенные в base64)
+            if photo_urls:
+                html_parts.append(f'<div class="photo-grid">')
+                for j, photo_url in enumerate(photo_urls[:5]):  # Ограничиваем 5 фото для base64
+                    try:
+                        # Загружаем изображение и конвертируем в base64
+                        img_response = requests.get(photo_url, headers=HEADERS, timeout=10)
+                        if img_response.status_code == 200:
+                            import base64
+                            img_base64 = base64.b64encode(img_response.content).decode('utf-8')
+                            img_mime = img_response.headers.get('content-type', 'image/jpeg')
+                            html_parts.append(f"""
+                            <div class="photo-item">
+                                <img src="data:{img_mime};base64,{img_base64}" alt="Фото {j+1}">
+                            </div>
+                            """)
+                        else:
+                            # Fallback для неудачной загрузки
+                            html_parts.append(f"""
+                            <div class="photo-item">
+                                <div style="background: #f0f0f0; border: 1px dashed #ccc; border-radius: 5px; padding: 20px; text-align: center; color: #666; height: 140px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                                    <div>📷 Фото {j+1}</div>
+                                    <div style="font-size: 12px; margin-top: 5px;">
+                                        <a href="{photo_url}" target="_blank" style="color: #0066cc;">Открыть фото</a>
+                                    </div>
+                                </div>
+                            </div>
+                            """)
+                    except Exception as e:
+                        # Fallback для ошибок
+                        html_parts.append(f"""
+                        <div class="photo-item">
+                            <div style="background: #f0f0f0; border: 1px dashed #ccc; border-radius: 5px; padding: 20px; text-align: center; color: #666; height: 140px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                                <div>📷 Фото {j+1}</div>
+                                <div style="font-size: 12px; margin-top: 5px;">
+                                    <a href="{photo_url}" target="_blank" style="color: #0066cc;">Открыть фото</a>
+                                </div>
+                            </div>
+                        </div>
+                        """)
+                
+                html_parts.append('</div>')
+                
+                # Информация о встроенных фото
+                html_parts.append(f"""
+                <div class="photo-info">
+                    <strong>📸 Фотографии:</strong> встроено {min(len(photo_urls), 5)} из {len(photo_urls)} фото
+                    <br><small style="color: #666;">
+                        💡 Фото встроены в HTML для лучшей совместимости на мобильных устройствах
+                        <br>• Работает без интернета после загрузки
+                        <br>• Нет проблем с CORS или блокировкой
+                    </small>
+                </div>
+                """)
             else:
                 html_parts.append('<p class="no-photos">📷 Фотографии не найдены</p>')
             
