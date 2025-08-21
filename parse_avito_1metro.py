@@ -431,6 +431,100 @@ class EnhancedMetroParser:
             print(f"❌ Ошибка перезагрузки браузера: {e}")
             return False
     
+    def restore_driver_connection(self):
+        """Восстанавливает соединение с WebDriver при потере соединения"""
+        try:
+            print("🔄 Восстанавливаем соединение с WebDriver...")
+            
+            # Закрываем текущий драйвер
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+            
+            # Небольшая пауза
+            time.sleep(3)
+            
+            # Создаем новый драйвер
+            if not self.setup_selenium():
+                print("❌ Не удалось создать новый WebDriver")
+                return False
+            
+            # Применяем cookies заново
+            cookies_data = self.load_cookies()
+            if cookies_data:
+                if not self.apply_cookies(cookies_data):
+                    print("⚠️ Не удалось применить cookies после восстановления")
+            
+            # Возвращаемся на текущую страницу
+            if hasattr(self, 'current_page_url') and self.current_page_url:
+                try:
+                    self.driver.get(self.current_page_url)
+                    time.sleep(2)
+                    print("✅ Соединение восстановлено, вернулись на текущую страницу")
+                    return True
+                except Exception as e:
+                    print(f"⚠️ Не удалось вернуться на страницу: {e}")
+                    return False
+            
+            print("✅ Соединение восстановлено")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Ошибка восстановления соединения: {e}")
+            return False
+    
+    def safe_parse_card_with_restore(self, card_element, card_index, max_retries=3):
+        """Парсит карточку с автоматическим восстановлением WebDriver при потере соединения"""
+        for attempt in range(max_retries):
+            try:
+                # Парсим карточку
+                card_data = self.parse_card(card_element)
+                if card_data:
+                    return card_data
+                else:
+                    print(f"⚠️ Карточка {card_index + 1} не дала данных")
+                    return None
+                    
+            except Exception as e:
+                error_msg = str(e).lower()
+                
+                # Проверяем на ошибку соединения
+                if 'connection refused' in error_msg or 'errno 111' in error_msg or 'max retries exceeded' in error_msg:
+                    print(f"🔄 Попытка {attempt + 1}/{max_retries}: WebDriver потерял соединение, восстанавливаем...")
+                    
+                    if not self.restore_driver_connection():
+                        print("❌ Не удалось восстановить WebDriver")
+                        return None
+                    
+                    # Получаем свежие элементы после восстановления
+                    try:
+                        fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                        if card_index < len(fresh_cards):
+                            card_element = fresh_cards[card_index]
+                            print(f"✅ Получены свежие элементы после восстановления")
+                        else:
+                            print(f"⚠️ Карточка {card_index + 1} недоступна после восстановления")
+                            return None
+                    except Exception as restore_error:
+                        print(f"❌ Ошибка получения элементов после восстановления: {restore_error}")
+                        return None
+                    
+                    time.sleep(2)  # Пауза после восстановления
+                    continue
+                    
+                # Для других ошибок (stale element, timeout) используем обычную retry логику
+                elif ('stale element' in error_msg or 'element not found' in error_msg or 'timeout' in error_msg) and attempt < max_retries - 1:
+                    print(f"🔄 Попытка {attempt + 1}/{max_retries}: {error_msg}, пробуем еще раз...")
+                    time.sleep(0.5)
+                    continue
+                else:
+                    print(f"❌ Ошибка карточки {card_index + 1}: {e}")
+                    return None
+        
+        return None
+    
     def apply_cookies(self, cookies_data):
         """Применяет cookies к драйверу"""
         try:
@@ -975,7 +1069,7 @@ class EnhancedMetroParser:
                             card = fresh_cards[i]
                             
                             # Парсим карточку
-                            card_data = self.parse_card(card)
+                            card_data = self.safe_parse_card_with_restore(card, i)
                             if card_data:
                                 card_data['card_number'] = i + 1
                                 card_data['raw_text'] = card.text.strip()
@@ -991,8 +1085,8 @@ class EnhancedMetroParser:
                                         fresh_cards_refresh = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
                                         if len(fresh_cards_refresh) > 0:
                                             first_card_refresh = fresh_cards_refresh[0]
-                                            # Парсим первую карточку обычным способом
-                                            first_card_data = self.parse_card(first_card_refresh)
+                                            # Парсим первую карточку безопасным способом
+                                            first_card_data = self.safe_parse_card_with_restore(first_card_refresh, 0)
                                             if first_card_data:
                                                 print("      ✅ Первая карточка успешно перепарсена для стабильности")
                                                 # ВАЖНО: Если первая карточка не была в результатах, добавляем её
@@ -1063,7 +1157,9 @@ class EnhancedMetroParser:
                                 continue
                                 
                             card = fresh_cards[j]
-                            card_data = self.parse_card(card)
+                            
+                            # Парсим карточку с автоматическим восстановлением при потере соединения
+                            card_data = self.safe_parse_card_with_restore(card, j)
                             if card_data:
                                 card_data['card_number'] = j + 1
                                 card_data['raw_text'] = card.text.strip()
@@ -1084,7 +1180,7 @@ class EnhancedMetroParser:
                                     fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
                                     if j < len(fresh_cards):
                                         card = fresh_cards[j]
-                                        card_data = self.parse_card(card)
+                                        card_data = self.safe_parse_card_with_restore(card, j)
                                         if card_data:
                                             card_data['card_number'] = j + 1
                                             card_data['raw_text'] = card.text.strip()
@@ -1660,8 +1756,8 @@ class EnhancedMetroParser:
                         last_part = parts[-1].strip()
                         if 'реквизиты проверены' in last_part.lower():
                             seller_info['type'] = 'agency'  # Агентство
-                        elif 'проверено в росреестре' in last_part.lower():
-                            seller_info['type'] = 'owner'   # Собственник
+                        elif 'документы проверены' in last_part.lower():
+                            seller_info['type'] = 'private'  # Частное лицо с проверенными документами
                         else:
                             seller_info['type'] = 'unknown'
                         
@@ -1757,8 +1853,8 @@ class EnhancedMetroParser:
                         last_part = parts[-1].strip()
                         if 'реквизиты проверены' in last_part.lower():
                             seller_info['type'] = 'agency'  # Агентство
-                        elif 'проверено в росреестре' in last_part.lower():
-                            seller_info['type'] = 'owner'   # Собственник
+                        elif 'документы проверены' in last_part.lower():
+                            seller_info['type'] = 'private'  # Частное лицо с проверенными документами
                         else:
                             seller_info['type'] = 'unknown'
                         
@@ -2713,6 +2809,9 @@ class EnhancedMetroParser:
             metro_url = self.get_metro_url_with_page(page)
             if not metro_url:
                 return []
+            
+            # Сохраняем текущий URL для возможного восстановления
+            self.current_page_url = metro_url
             
             # Переходим на страницу
             self.driver.get(metro_url)

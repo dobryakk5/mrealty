@@ -1,0 +1,362 @@
+
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Подбор недвижимости</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+            .listing { background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .listing h3 { color: #333; margin-top: 0; margin-bottom: 15px; }
+            .listing p { margin: 8px 0; color: #555; }
+            .listing strong { color: #333; }
+            .photo-grid { 
+                display: grid; 
+                grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); 
+                gap: 8px; 
+                margin: 15px 0; 
+                max-height: 600px; 
+                overflow-y: auto; 
+                padding: 10px;
+                border: 1px solid #eee;
+                border-radius: 8px;
+            }
+            .photo-item { position: relative; }
+            .photo-item img { 
+                width: 100%; 
+                height: 140px; 
+                object-fit: cover; 
+                border-radius: 5px; 
+                border: 2px solid transparent;
+                transition: border-color 0.2s;
+            }
+            .photo-item img:hover { 
+                border-color: #0066cc;
+            }
+            .no-photos { color: #666; font-style: italic; }
+        </style>
+    </head>
+    <body>
+        <h1>🏠 Подбор недвижимости</h1>
+    
+            <div class="listing">
+                <h3>Объявление #1</h3>
+            <p><strong>Комнат:</strong> 4</p><p><strong>Цена:</strong> 16,800,000 ₽</p><p><strong>Этаж:</strong> 5 из 9</p><p><strong>Общая площадь:</strong> 80.6 м²</p><p><strong>Кухня:</strong> 9.5 м²</p><p><strong>Минут до метро:</strong> 6 Бунинская аллея</p><div class="photo-grid">
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476328-1.jpg" alt="Фото 1">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-buninskie-kvartaly-2571494327-1.jpg" alt="Фото 2">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476328-2.jpg" alt="Фото 3">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-buninskie-kvartaly-2571494327-2.jpg" alt="Фото 4">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571512755-2.jpg" alt="Фото 5">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571509814-2.jpg" alt="Фото 6">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476530-2.jpg" alt="Фото 7">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476517-2.jpg" alt="Фото 8">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476399-2.jpg" alt="Фото 9">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571512790-2.jpg" alt="Фото 10">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571479214-2.jpg" alt="Фото 11">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571479251-2.jpg" alt="Фото 12">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476510-2.jpg" alt="Фото 13">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476424-2.jpg" alt="Фото 14">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571479232-2.jpg" alt="Фото 15">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571509811-2.jpg" alt="Фото 16">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571512798-2.jpg" alt="Фото 17">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571479300-2.jpg" alt="Фото 18">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476349-2.jpg" alt="Фото 19">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571479188-2.jpg" alt="Фото 20">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571509813-2.jpg" alt="Фото 21">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476526-2.jpg" alt="Фото 22">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476477-2.jpg" alt="Фото 23">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476381-2.jpg" alt="Фото 24">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476270-2.jpg" alt="Фото 25">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476475-2.jpg" alt="Фото 26">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-sosenskoe-kuprina-prospekt-2571476402-2.jpg" alt="Фото 27">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://kinescopecdn.net/f9f281e3-5528-474a-b760-2c5cecf2ce98/posters/0589cb86-4db0-4ba5-950b-58186e3f91cd/md/c57cf7d9-d6e9-41c0-84cc-47a483de9526.jpg" alt="Фото 28">
+                    </div>
+                    </div></div>
+            <div class="listing">
+                <h3>Объявление #2</h3>
+            <p><strong>Комнат:</strong> 3</p><p><strong>Цена:</strong> 39,000,000 ₽</p><p><strong>Этаж:</strong> 9 из 11</p><p><strong>Общая площадь:</strong> 70 м²</p><p><strong>Кухня:</strong> 13 м²</p><p><strong>Минут до метро:</strong> 3 Белорусская</p><div class="photo-grid">
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597048582-1.jpg" alt="Фото 1">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034820-1.jpg" alt="Фото 2">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034208-1.jpg" alt="Фото 3">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597048582-2.jpg" alt="Фото 4">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034820-2.jpg" alt="Фото 5">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034208-2.jpg" alt="Фото 6">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034323-2.jpg" alt="Фото 7">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597048795-2.jpg" alt="Фото 8">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034653-2.jpg" alt="Фото 9">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034222-2.jpg" alt="Фото 10">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034805-2.jpg" alt="Фото 11">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597048794-2.jpg" alt="Фото 12">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597048796-2.jpg" alt="Фото 13">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034875-2.jpg" alt="Фото 14">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034560-2.jpg" alt="Фото 15">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034329-2.jpg" alt="Фото 16">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034695-2.jpg" alt="Фото 17">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597033991-2.jpg" alt="Фото 18">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034747-2.jpg" alt="Фото 19">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034102-2.jpg" alt="Фото 20">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597048793-2.jpg" alt="Фото 21">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034106-2.jpg" alt="Фото 22">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034132-2.jpg" alt="Фото 23">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034478-2.jpg" alt="Фото 24">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034491-2.jpg" alt="Фото 25">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034001-2.jpg" alt="Фото 26">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034636-2.jpg" alt="Фото 27">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034606-2.jpg" alt="Фото 28">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597080250-2.jpg" alt="Фото 29">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034204-2.jpg" alt="Фото 30">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034363-2.jpg" alt="Фото 31">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034428-2.jpg" alt="Фото 32">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034667-2.jpg" alt="Фото 33">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira-moskva-tverskayayamskaya-1ya-ulica-2597034046-2.jpg" alt="Фото 34">
+                    </div>
+                    </div></div>
+            <div class="listing">
+                <h3>Объявление #3</h3>
+            <p><strong>Комнат:</strong> 2</p><p><strong>Цена:</strong> 65,000.0 ₽</p><p><strong>Этаж:</strong> 9 из 25</p><p><strong>Общая площадь:</strong> 39 м²</p><p><strong>Кухня:</strong> 6 м²</p><p><strong>Минут до метро:</strong> 10 Павшино</p><div class="photo-grid">
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593960622-1.jpg" alt="Фото 1">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887899-1.jpg" alt="Фото 2">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593960621-1.jpg" alt="Фото 3">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593960622-2.jpg" alt="Фото 4">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887899-2.jpg" alt="Фото 5">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593960621-2.jpg" alt="Фото 6">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887852-2.jpg" alt="Фото 7">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887897-2.jpg" alt="Фото 8">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887886-2.jpg" alt="Фото 9">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887855-2.jpg" alt="Фото 10">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887853-2.jpg" alt="Фото 11">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887913-2.jpg" alt="Фото 12">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887911-2.jpg" alt="Фото 13">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887893-2.jpg" alt="Фото 14">
+                    </div>
+                    
+                    <div class="photo-item">
+                        <img src="https://images.cdn-cian.ru/images/kvartira100-2593887921-2.jpg" alt="Фото 15">
+                    </div>
+                    </div></div>
+    </body>
+    </html>
+    

@@ -395,6 +395,172 @@ async def export_sim_ads(
 
     return bio, request_id
 
+def extract_photo_urls(soup: BeautifulSoup) -> list[str]:
+    """
+    Извлекает ссылки на все фотографии из галереи CIAN
+    """
+    photo_urls = []
+    
+    try:
+        # Ищем галерею по data-name="GalleryInnerComponent"
+        gallery = soup.find('div', {'data-name': 'GalleryInnerComponent'})
+        if not gallery:
+            return photo_urls
+        
+        # Ищем все изображения в галерее
+        # Основные изображения
+        images = gallery.find_all('img', src=True)
+        for img in images:
+            src = img.get('src')
+            if src and src.startswith('http') and 'cdn-cian.ru' in src:
+                photo_urls.append(src)
+        
+        # Изображения в background-image (для видео и некоторых фото)
+        elements_with_bg = gallery.find_all(style=re.compile(r'background-image'))
+        for elem in elements_with_bg:
+            style = elem.get('style', '')
+            bg_match = re.search(r'background-image:\s*url\(["\']?([^"\')\s]+)["\']?\)', style)
+            if bg_match:
+                bg_url = bg_match.group(1)
+                if bg_url.startswith('http') and ('cdn-cian.ru' in bg_url or 'kinescopecdn.net' in bg_url):
+                    photo_urls.append(bg_url)
+        
+        # Убираем дубликаты, сохраняя порядок
+        seen = set()
+        unique_photos = []
+        for url in photo_urls:
+            if url not in seen:
+                seen.add(url)
+                unique_photos.append(url)
+        
+        return unique_photos
+        
+    except Exception as e:
+        print(f"Ошибка при извлечении фотографий: {e}")
+        return []
+
+def generate_html_gallery(listing_urls: list[str], user_id: int, subtitle: str = None) -> str:
+    """
+    Генерирует красивый HTML документ с галереей фотографий для объявлений
+    """
+    sess = requests.Session()
+    html_parts = []
+    
+    html_parts.append("""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Подбор недвижимости</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+            .listing { background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .listing h3 { color: #333; margin-top: 0; margin-bottom: 15px; }
+            .listing p { margin: 8px 0; color: #555; }
+            .listing strong { color: #333; }
+            .main-title { color: #333; margin-bottom: 10px; }
+            .subtitle { color: #666; font-size: 18px; margin-bottom: 30px; font-style: italic; }
+            .photo-grid { 
+                display: grid; 
+                grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); 
+                gap: 8px; 
+                margin: 15px 0; 
+                max-height: 600px; 
+                overflow-y: auto; 
+                padding: 10px;
+                border: 1px solid #eee;
+                border-radius: 8px;
+            }
+            .photo-item { position: relative; }
+            .photo-item img { 
+                width: 100%; 
+                height: 140px; 
+                object-fit: cover; 
+                border-radius: 5px; 
+                border: 2px solid transparent;
+                transition: border-color 0.2s;
+            }
+            .photo-item img:hover { 
+                border-color: #0066cc;
+            }
+            .no-photos { color: #666; font-style: italic; }
+        </style>
+    </head>
+    <body>
+        <h1 class="main-title">🏠 Подбор недвижимости</h1>
+    """)
+    
+    # Добавляем подзаголовок, если он есть
+    if subtitle and subtitle.strip():
+        html_parts.append(f'<h2 class="subtitle">{subtitle.strip()}</h2>')
+    
+    for i, url in enumerate(listing_urls, 1):
+        try:
+            # Парсим объявление
+            listing_data = parse_listing(url, sess)
+            
+            # Извлекаем фотографии
+            soup = BeautifulSoup(requests.get(url, headers=HEADERS).text, 'html.parser')
+            photo_urls = extract_photo_urls(soup)
+            
+            html_parts.append(f"""
+            <div class="listing">
+                <h3>Вариант #{i}</h3>
+            """)
+            
+            # Добавляем основную информацию
+            if 'Комнат' in listing_data and listing_data['Комнат']:
+                html_parts.append(f"<p><strong>Комнат:</strong> {listing_data['Комнат']}</p>")
+            if 'Цена_raw' in listing_data and listing_data['Цена_raw']:
+                html_parts.append(f"<p><strong>Цена:</strong> {listing_data['Цена_raw']:,} ₽</p>")
+            
+            # Добавляем этаж/этажность
+            if 'Этаж' in listing_data and listing_data['Этаж']:
+                html_parts.append(f"<p><strong>Этаж:</strong> {listing_data['Этаж']}</p>")
+            
+            # Добавляем метраж общий
+            if 'Общая площадь' in listing_data and listing_data['Общая площадь']:
+                html_parts.append(f"<p><strong>Общая площадь:</strong> {listing_data['Общая площадь']} м²</p>")
+            
+            # Добавляем кухню
+            if 'Площадь кухни' in listing_data and listing_data['Площадь кухни']:
+                html_parts.append(f"<p><strong>Кухня:</strong> {listing_data['Площадь кухни']} м²</p>")
+            
+            # Переименовываем "Метро" в "Минут до метро"
+            if 'Минут метро' in listing_data and listing_data['Минут метро']:
+                html_parts.append(f"<p><strong>Минут до метро:</strong> {listing_data['Минут метро']}</p>")
+            
+            # Добавляем фотографии
+            if photo_urls:
+                html_parts.append(f'<div class="photo-grid">')
+                for j, photo_url in enumerate(photo_urls):  # Показываем ВСЕ фотографии
+                    html_parts.append(f"""
+                    <div class="photo-item">
+                        <img src="{photo_url}" alt="Фото {j+1}">
+                    </div>
+                    """)
+                html_parts.append('</div>')
+            else:
+                html_parts.append('<p class="no-photos">📷 Фотографии не найдены</p>')
+            
+            html_parts.append('</div>')
+            
+        except Exception as e:
+            html_parts.append(f"""
+            <div class="listing">
+                <h3>Вариант #{i}</h3>
+                <p style="color: red;">Ошибка при парсинге: {str(e)}</p>
+            </div>
+            """)
+    
+    html_parts.append("""
+    </body>
+    </html>
+    """)
+    
+    return ''.join(html_parts)
+
 if __name__ == '__main__':
     user_id = 12345
     urls = ["https://www.cian.ru/sale/flat/318826533/"]
