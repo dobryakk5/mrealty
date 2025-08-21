@@ -21,13 +21,16 @@ DEFAULT_METRO_ID = 95
 DEFAULT_MAX_PAGES = 1
 
 # Количество карточек на странице по умолчанию (0 = все карточки)
-DEFAULT_MAX_CARDS = 5
+DEFAULT_MAX_CARDS = 50
+
+# Начальная страница по умолчанию (1 = первая страница)
+DEFAULT_START_PAGE = 1
 
 # =============================================================================
 # КОНЕЦ НАСТРОЕК
 # =============================================================================
 
-async def quick_parse_metro(metro_id, max_pages, max_cards=None):
+async def quick_parse_metro(metro_id, max_pages, max_cards=None, start_page=1):
     """
     Быстрый парсинг одного метро
     
@@ -35,6 +38,7 @@ async def quick_parse_metro(metro_id, max_pages, max_cards=None):
         metro_id (int): ID метро из таблицы metro
         max_pages (int): Количество страниц для парсинга
         max_cards (int, optional): Количество карточек на странице
+        start_page (int, optional): Номер страницы, с которой начать парсинг
     """
     
     # Загружаем переменные окружения
@@ -55,13 +59,16 @@ async def quick_parse_metro(metro_id, max_pages, max_cards=None):
     print(f"🚀 Быстрый парсинг метро ID={metro_id}")
     print(f"📄 Страниц: {max_pages if max_pages > 0 else 'все'}")
     print(f"📊 Карточек на странице: {max_cards if max_cards and max_cards > 0 else 'все'}")
+    if start_page > 1:
+        print(f"🚀 Начинаем с страницы: {start_page}")
     print("=" * 60)
     
     # Запускаем парсинг
     success, saved_count, total_cards = await parser.parse_single_metro(
         metro_id=metro_id,
         max_pages=max_pages,
-        max_cards=max_cards
+        max_cards=max_cards,
+        start_page=start_page
     )
     
     # Выводим результат
@@ -85,10 +92,11 @@ def main():
         print(f"   • Метро ID: {DEFAULT_METRO_ID}")
         print(f"   • Страниц: {DEFAULT_MAX_PAGES if DEFAULT_MAX_PAGES > 0 else 'все'}")
         print(f"   • Карточек на странице: {DEFAULT_MAX_CARDS if DEFAULT_MAX_CARDS > 0 else 'все'}")
+        print(f"   • Начальная страница: {DEFAULT_START_PAGE}")
         print("=" * 60)
         
         # Запускаем парсинг с настройками по умолчанию
-        success = asyncio.run(quick_parse_metro(DEFAULT_METRO_ID, DEFAULT_MAX_PAGES, DEFAULT_MAX_CARDS))
+        success = asyncio.run(quick_parse_metro(DEFAULT_METRO_ID, DEFAULT_MAX_PAGES, DEFAULT_MAX_CARDS, DEFAULT_START_PAGE))
         
         if success:
             sys.exit(0)  # Успешное завершение
@@ -98,24 +106,28 @@ def main():
     # Если указан ID метро, но нужно показать справку
     if len(sys.argv) == 2 and sys.argv[1] in ['-h', '--help', 'help', '?']:
         print("💡 Использование:")
-        print("   python quick_metro_parse.py                    # Запуск с настройками по умолчанию")
-        print("   python quick_metro_parse.py <metro_id>         # Метро ID, остальное по умолчанию")
-        print("   python quick_metro_parse.py <metro_id> <pages> # Метро ID + страницы, карточки по умолчанию")
-        print("   python quick_metro_parse.py <metro_id> <pages> <cards> # Все параметры")
+        print("   python quick_metro_parse.py                                    # Запуск с настройками по умолчанию")
+        print("   python quick_metro_parse.py <metro_id>                         # Метро ID, остальное по умолчанию")
+        print("   python quick_metro_parse.py <metro_id> <pages>                 # Метро ID + страницы, карточки по умолчанию")
+        print("   python quick_metro_parse.py <metro_id> <pages> <cards>         # Метро ID + страницы + карточки")
+        print("   python quick_metro_parse.py <metro_id> <pages> <cards> <start> # Все параметры + начальная страница")
         print("\n📝 Примеры:")
-        print("   python quick_metro_parse.py                    # Метро ID=2, все страницы, все карточки")
+        print("   python quick_metro_parse.py                    # Метро ID=95, все страницы, все карточки")
         print("   python quick_metro_parse.py 1                 # Метро ID=1, все страницы, все карточки")
         print("   python quick_metro_parse.py 1 3               # Метро ID=1, 3 страницы, все карточки")
         print("   python quick_metro_parse.py 2 1 15            # Метро ID=2, 1 страница, 15 карточек")
         print("   python quick_metro_parse.py 5 0 0             # Метро ID=5, все страницы, все карточки")
         print("   python quick_metro_parse.py 3 2 0             # Метро ID=3, 2 страницы, все карточки")
+        print("   python quick_metro_parse.py 1 5 20 3          # Метро ID=1, 5 страниц, 20 карточек, начать с 3-й страницы")
         print(f"\n⚙️ Текущие настройки по умолчанию:")
         print(f"   • Метро ID: {DEFAULT_METRO_ID}")
         print(f"   • Страниц: {DEFAULT_MAX_PAGES if DEFAULT_MAX_PAGES > 0 else 'все'}")
         print(f"   • Карточек на странице: {DEFAULT_MAX_CARDS if DEFAULT_MAX_CARDS > 0 else 'все'}")
+        print(f"   • Начальная страница: {DEFAULT_START_PAGE}")
         print("\n💡 Специальные значения:")
         print(f"   • Страниц = 0: парсить все доступные страницы")
         print(f"   • Карточек = 0: парсить все карточки на странице")
+        print(f"   • Начальная страница = 1: начать с первой страницы")
         return
     
     try:
@@ -136,6 +148,14 @@ def main():
             max_cards = DEFAULT_MAX_CARDS
             print(f"📊 Используем количество карточек по умолчанию: {max_cards if max_cards > 0 else 'все'}")
         
+        # Если указана начальная страница, используем её, иначе берем по умолчанию
+        if len(sys.argv) > 4:
+            start_page = int(sys.argv[4])
+        else:
+            start_page = DEFAULT_START_PAGE
+            if start_page > 1:
+                print(f"🚀 Используем начальную страницу по умолчанию: {start_page}")
+        
         # Проверяем корректность параметров
         if metro_id <= 0:
             print("❌ ID метро должен быть положительным числом")
@@ -149,8 +169,12 @@ def main():
             print("❌ Количество карточек должно быть неотрицательным числом")
             return
         
+        if start_page < 1:
+            print("❌ Начальная страница должна быть положительным числом")
+            return
+        
         # Запускаем парсинг
-        success = asyncio.run(quick_parse_metro(metro_id, max_pages, max_cards))
+        success = asyncio.run(quick_parse_metro(metro_id, max_pages, max_cards, start_page))
         
         if success:
             sys.exit(0)  # Успешное завершение

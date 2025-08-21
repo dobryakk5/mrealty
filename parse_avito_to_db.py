@@ -9,11 +9,17 @@
 - Система автоматически восстанавливается после прерывания
 - При парсинге всех метро (--all) прогресс сохраняется по каждой станции
 
+ЛОГИКА НАЧАЛЬНОЙ СТРАНИЦЫ (--start-page):
+- Параметр применяется только к первому метро в списке
+- Это позволяет возобновить парсинг конкретного метро с определенной страницы
+- Все последующие метро всегда начинают с 1-й страницы
+
 Опции:
   --metro-ids 1,2,3     Список конкретных metro.id через запятую
   --exclude 4,5,6       Исключить определенные metro.id
   --max-pages N          Максимальное количество страниц (0 = все)
   --max-cards N          Максимальное количество карточек на странице (0 = все)
+  --start-page N         Начать с определенной страницы (только для первого метро, по умолчанию: 1)
   --all                  Парсить все метро Москвы
   --help                 Показать справку
 
@@ -22,6 +28,9 @@
   python parse_avito_to_db.py --metro-ids 1,2,3       # Только метро 1,2,3
   python parse_avito_to_db.py --exclude 4,5 --max-pages 2  # Все метро кроме 4,5, максимум 2 страницы
   python parse_avito_to_db.py --metro-ids 1,2 --max-cards 10  # Метро 1,2, максимум 10 карточек на странице
+  python parse_avito_to_db.py --metro-ids 1 --start-page 5  # Метро 1, начать с 5-й страницы
+  python parse_avito_to_db.py --metro-ids 1,2,3 --start-page 3  # Метро 1,2,3: 1-е с 3-й страницы, остальные с 1-й
+  python parse_avito_to_db.py --all --start-page 3    # Все метро: первое с 3-й страницы, остальные с 1-й
 """
 
 import asyncio
@@ -49,6 +58,9 @@ DEFAULT_MAX_PAGES = 0
 
 # Количество карточек на странице по умолчанию (0 = все карточки)
 DEFAULT_MAX_CARDS = 0
+
+# Начальная страница по умолчанию (1 = первая страница)
+DEFAULT_START_PAGE = 1
 
 # Задержка между метро (в секундах)
 METRO_DELAY = 10
@@ -166,8 +178,15 @@ class MetroBatchParser:
             print(f"❌ Ошибка получения списка метро: {e}")
             return []
     
-    async def parse_single_metro(self, metro_info, max_pages, max_cards):
-        """Парсит одно метро"""
+    async def parse_single_metro(self, metro_info, max_pages, max_cards, start_page=1):
+        """Парсит одно метро
+        
+        Args:
+            metro_info: Информация о метро
+            max_pages: Максимальное количество страниц
+            max_cards: Максимальное количество карточек на странице
+            start_page: Номер страницы, с которой начать парсинг
+        """
         try:
             metro_id = metro_info['id']
             metro_name = metro_info['name']
@@ -176,6 +195,8 @@ class MetroBatchParser:
             print(f"\n🚀 Парсинг метро: {metro_name} (ID: {metro_id}, avito_id: {metro_avito_id})")
             print(f"📄 Страниц: {max_pages if max_pages > 0 else 'все'}")
             print(f"📊 Карточек на странице: {max_cards if max_cards and max_cards > 0 else 'все'}")
+            if start_page > 1:
+                print(f"🚀 Начинаем с страницы: {start_page}")
             print("=" * 60)
             
             # Создаем новый парсер для каждого метро
@@ -188,7 +209,8 @@ class MetroBatchParser:
             success, saved_count, total_cards = await self.parser.parse_single_metro(
                 metro_id=metro_id,
                 max_pages=max_pages,
-                max_cards=max_cards
+                max_cards=max_cards,
+                start_page=start_page
             )
             
             # Обновляем статистику
@@ -210,7 +232,7 @@ class MetroBatchParser:
             self.stats['failed_metro'] += 1
             return False
     
-    async def parse_metro_batch(self, metro_list, max_pages, max_cards, use_progress_tracking=False):
+    async def parse_metro_batch(self, metro_list, max_pages, max_cards, start_page=1, use_progress_tracking=False):
         """
         Парсит пакет метро
         
@@ -218,6 +240,7 @@ class MetroBatchParser:
             metro_list: Список метро для парсинга
             max_pages: Максимальное количество страниц
             max_cards: Максимальное количество карточек на странице
+            start_page: Номер страницы, с которой начать парсинг
             use_progress_tracking: Включить отслеживание прогресса (только для --all)
         """
         if not metro_list:
@@ -285,8 +308,14 @@ class MetroBatchParser:
             metro_info = metro_list[i]
             print(f"\n📍 Метро {i+1}/{len(metro_list)}: {metro_info['name']} (ID: {metro_info['id']})")
             
+            # ЛОГИКА НАЧАЛЬНОЙ СТРАНИЦЫ:
+            # start_page применяется только к первому метро в списке (current_index)
+            # Это позволяет возобновить парсинг конкретного метро с определенной страницы
+            # Все последующие метро всегда начинают с 1-й страницы
+            current_start_page = start_page if i == current_index else 1
+            
             # Парсим метро
-            success = await self.parse_single_metro(metro_info, max_pages, max_cards)
+            success = await self.parse_single_metro(metro_info, max_pages, max_cards, current_start_page)
             
             # Обновляем прогресс ПОСЛЕ успешной обработки метро
             if use_progress_tracking and session_id:
@@ -358,8 +387,15 @@ async def main():
                        help=f'Максимальное количество страниц (0 = все, по умолчанию: {DEFAULT_MAX_PAGES})')
     parser.add_argument('--max-cards', type=int, default=DEFAULT_MAX_CARDS,
                        help=f'Максимальное количество карточек на странице (0 = все, по умолчанию: {DEFAULT_MAX_CARDS})')
+    parser.add_argument('--start-page', type=int, default=DEFAULT_START_PAGE,
+                       help=f'Начать с определенной страницы (только для первого метро, по умолчанию: {DEFAULT_START_PAGE})')
     
     args = parser.parse_args()
+    
+    # Валидация параметров
+    if args.start_page < 1:
+        print("❌ Ошибка: --start-page должен быть положительным числом")
+        return False
     
     # Создаем парсер
     batch_parser = MetroBatchParser(database_url)
@@ -393,6 +429,15 @@ async def main():
         for metro in metro_list:
             print(f"   • {metro['name']} (ID: {metro['id']}, avito_id: {metro['avito_id']})")
         
+        # Выводим настройки парсинга
+        print(f"\n⚙️ Настройки парсинга:")
+        print(f"   • Страниц: {args.max_pages if args.max_pages > 0 else 'все'}")
+        print(f"   • Карточек на странице: {args.max_cards if args.max_cards > 0 else 'все'}")
+        if args.start_page > 1:
+            print(f"   • Начальная страница: {args.start_page} (только для первого метро)")
+            print(f"   • Остальные метро: начнут с 1-й страницы")
+        print("=" * 60)
+        
         # Запускаем парсинг
         # Используем отслеживание прогресса только для парсинга всех метро (--all)
         use_progress_tracking = args.all
@@ -401,6 +446,7 @@ async def main():
             metro_list, 
             args.max_pages, 
             args.max_cards,
+            args.start_page,
             use_progress_tracking
         )
         
