@@ -14,6 +14,9 @@ from datetime import datetime
 # Асинхронное сохранение в БД
 from db_handler import save_listings, find_similar_ads_grouped, call_update_ad
 
+# Импортируем модуль для работы с фотографиями
+from photo_processor import photo_processor
+
 # Заголовки для HTTP-запросов
 HEADERS = {
     'User-Agent': (
@@ -568,8 +571,12 @@ def generate_html_gallery(listing_urls: list[str], user_id: int, subtitle: str =
             
             # Добавляем фотографии
             if photo_urls:
+                # Генерируем сетку фотографий (все фото без ограничений)
+                photo_grid_html = photo_processor.generate_photo_grid_html([], 'url')
+                
+                # Заменяем пустую сетку на реальные фотографии
                 html_parts.append(f'<div class="photo-grid">')
-                for j, photo_url in enumerate(photo_urls):  # Показываем ВСЕ фотографии
+                for j, photo_url in enumerate(photo_urls):
                     html_parts.append(f"""
                     <div class="photo-item">
                         <img src="{photo_url}" alt="Фото {j+1}" 
@@ -584,19 +591,6 @@ def generate_html_gallery(listing_urls: list[str], user_id: int, subtitle: str =
                     </div>
                     """)
                 html_parts.append('</div>')
-                
-                # Добавляем информацию о проблемах с фото
-                html_parts.append(f"""
-                <div class="photo-info" style="background: #f8f9fa; padding: 10px; border-radius: 5px; margin-top: 15px; font-size: 14px;">
-                    <strong>📸 Фотографии:</strong> найдено {len(photo_urls)} фото
-                    <br><small style="color: #666;">
-                        💡 Если фото не отображаются, попробуйте:
-                        <br>• Открыть файл в браузере на компьютере
-                        <br>• Нажать на ссылку "Открыть фото" под каждым изображением
-                        <br>• Проверить интернет-соединение
-                    </small>
-                </div>
-                """)
             else:
                 html_parts.append('<p class="no-photos">📷 Фотографии не найдены</p>')
             
@@ -736,58 +730,12 @@ def generate_html_gallery_embedded(listing_urls: list[str], user_id: int, subtit
             
             # Добавляем фотографии (встроенные в base64)
             if photo_urls:
-                html_parts.append(f'<div class="photo-grid">')
-                for j, photo_url in enumerate(photo_urls[:5]):  # Ограничиваем 5 фото для base64
-                    try:
-                        # Загружаем изображение и конвертируем в base64
-                        img_response = requests.get(photo_url, headers=HEADERS, timeout=10)
-                        if img_response.status_code == 200:
-                            import base64
-                            img_base64 = base64.b64encode(img_response.content).decode('utf-8')
-                            img_mime = img_response.headers.get('content-type', 'image/jpeg')
-                            html_parts.append(f"""
-                            <div class="photo-item">
-                                <img src="data:{img_mime};base64,{img_base64}" alt="Фото {j+1}">
-                            </div>
-                            """)
-                        else:
-                            # Fallback для неудачной загрузки
-                            html_parts.append(f"""
-                            <div class="photo-item">
-                                <div style="background: #f0f0f0; border: 1px dashed #ccc; border-radius: 5px; padding: 20px; text-align: center; color: #666; height: 140px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
-                                    <div>📷 Фото {j+1}</div>
-                                    <div style="font-size: 12px; margin-top: 5px;">
-                                        <a href="{photo_url}" target="_blank" style="color: #0066cc;">Открыть фото</a>
-                                    </div>
-                                </div>
-                            </div>
-                            """)
-                    except Exception as e:
-                        # Fallback для ошибок
-                        html_parts.append(f"""
-                        <div class="photo-item">
-                            <div style="background: #f0f0f0; border: 1px dashed #ccc; border-radius: 5px; padding: 20px; text-align: center; color: #666; height: 140px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
-                                <div>📷 Фото {j+1}</div>
-                                <div style="font-size: 12px; margin-top: 5px;">
-                                    <a href="{photo_url}" target="_blank" style="color: #0066cc;">Открыть фото</a>
-                                </div>
-                            </div>
-                        </div>
-                        """)
+                # Обрабатываем фотографии для встроенного HTML (все фото без ограничений)
+                processed_photos = photo_processor.process_photos_for_embedded_html(photo_urls)
                 
-                html_parts.append('</div>')
-                
-                # Информация о встроенных фото
-                html_parts.append(f"""
-                <div class="photo-info">
-                    <strong>📸 Фотографии:</strong> встроено {min(len(photo_urls), 5)} из {len(photo_urls)} фото
-                    <br><small style="color: #666;">
-                        💡 Фото встроены в HTML для лучшей совместимости на мобильных устройствах
-                        <br>• Работает без интернета после загрузки
-                        <br>• Нет проблем с CORS или блокировкой
-                    </small>
-                </div>
-                """)
+                # Генерируем сетку фотографий
+                photo_grid_html = photo_processor.generate_photo_grid_html(processed_photos, 'embedded')
+                html_parts.append(photo_grid_html)
             else:
                 html_parts.append('<p class="no-photos">📷 Фотографии не найдены</p>')
             
