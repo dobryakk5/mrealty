@@ -1,5 +1,5 @@
 # text_handlers.py
-from aiogram.types import Message
+from aiogram.types import Message, BufferedInputFile
 from listings_processor import export_listings_to_excel, generate_html_gallery, extract_urls
 import io
 
@@ -59,8 +59,11 @@ async def handle_text_message(message: Message):
             html_file = io.BytesIO(html_content.encode('utf-8'))
             html_file.name = f"подбор_недвижимости_{message.from_user.id}.html"
             
+            # Используем BufferedInputFile для корректной отправки
+            input_file = BufferedInputFile(html_file.getvalue(), filename=f"подбор_недвижимости_{message.from_user.id}.html")
+            
             await message.answer_document(
-                html_file,
+                input_file,
                 caption=f"🏠 Подбор недвижимости\n"
                        f"📊 Количество объявлений: {url_count}\n"
                        f"📁 Формат: HTML (откройте в браузере для просмотра)"
@@ -72,8 +75,11 @@ async def handle_text_message(message: Message):
             
             excel_file, request_id = await export_listings_to_excel(urls, message.from_user.id)
             
+            # Используем BufferedInputFile для корректной отправки
+            input_file = BufferedInputFile(excel_file.getvalue(), filename=f"отчет_недвижимости_{message.from_user.id}.xlsx")
+            
             await message.answer_document(
-                excel_file,
+                input_file,
                 caption=f"📊 Отчет по недвижимости\n"
                        f"📋 Количество объявлений: {url_count}\n"
                        f"🆔 ID запроса: {request_id}\n"
