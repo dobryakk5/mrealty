@@ -9,7 +9,7 @@ import os
 from dotenv import load_dotenv
 
 from text_handlers import handle_text_message
-from start_handlers import on_start
+from start_handlers import start_handler
 
 load_dotenv()
 API_TOKEN = os.getenv('API_TOKEN')
@@ -18,9 +18,9 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 @dp.message(CommandStart())
-async def start_handler(message):
+async def start_handler_wrapper(message):
     try:
-        await on_start(message)
+        await start_handler(message)
     except TelegramForbiddenError:
         logging.warning(f"Пользователь {message.from_user.id} заблокировал бота")
     except Exception as e:

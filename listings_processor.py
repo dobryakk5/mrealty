@@ -624,7 +624,7 @@ def generate_html_gallery_embedded(listing_urls: list[str], user_id: int, subtit
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Подбор недвижимости (встроенные фото)</title>
+        <title>Подбор недвижимости</title>
         <style>
             body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
             .listing { background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -685,7 +685,7 @@ def generate_html_gallery_embedded(listing_urls: list[str], user_id: int, subtit
         </style>
     </head>
     <body>
-        <h1 class="main-title">🏠 Подбор недвижимости (встроенные фото)</h1>
+        <h1 class="main-title">🏠 Подбор недвижимости</h1>
     """)
     
     # Добавляем подзаголовок, если он есть

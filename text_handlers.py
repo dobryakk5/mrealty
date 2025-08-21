@@ -41,7 +41,7 @@ async def handle_text_message(message: Message):
                 await message.answer("🔗 Генерирую подбор с встроенными фотографиями...")
                 html_content = generate_html_gallery_embedded(urls, message.from_user.id, subtitle)
                 filename = f"подбор_встроенные_фото_{message.from_user.id}.html"
-                caption = f"🏠 Подбор недвижимости (встроенные фото)\n📊 Количество объявлений: {url_count}\n📁 Формат: HTML с встроенными изображениями"
+                caption = f"🏠 Подбор недвижимости\n📊 Количество объявлений: {url_count}\n📁 Формат: HTML с встроенными изображениями"
             else:
                 await message.answer("🖼️ Генерирую подбор с обычными ссылками на фото...")
                 html_content = generate_html_gallery(urls, message.from_user.id, subtitle)
