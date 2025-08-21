@@ -584,27 +584,72 @@ class EnhancedMetroParser:
         print(f"[CONTEXT] Страница {page}: сгенерирован новый context")
         return metro_url
     
-    def wait_for_dom_stability(self):
-        """Ждет стабилизации DOM после загрузки страницы (без таймаута)"""
+    def wait_for_dom_stability(self, timeout=15):
+        """Ждет стабилизации DOM после загрузки страницы с таймаутом
+        
+        Оптимизированная версия: вместо фиксированной паузы в 1 секунду
+        использует умное ожидание появления карточек с таймаутом 5 секунд
+        """
         try:
             print("⏳ Ждем стабилизации DOM...")
             
-            # Ждем полной загрузки страницы
-            while True:
+            # БЫСТРАЯ ПРОВЕРКА на пустую страницу
+            page_text = self.driver.page_source.lower()
+            empty_indicators = [
+                'объявлений не найдено',
+                'ничего не найдено',
+                'по вашему запросу ничего не найдено',
+                'нет объявлений',
+                'объявления не найдены',
+                'не найдено',
+                'пустой результат',
+                'поиск не дал результатов'
+            ]
+            
+            if any(indicator in page_text for indicator in empty_indicators):
+                print("ℹ️ Страница пустая - объявлений не найдено")
+                return True
+            
+            # Ждем полной загрузки страницы с таймаутом
+            start_time = time.time()
+            while time.time() - start_time < timeout:
                 ready_state = self.driver.execute_script("return document.readyState")
                 if ready_state == "complete":
                     break
                 time.sleep(0.1)  # Короткая пауза
             
-            # Дополнительная пауза для JavaScript и динамического контента
-            time.sleep(1)
+            if time.time() - start_time >= timeout:
+                print(f"⚠️ Таймаут ожидания readyState (>{timeout}с), продолжаем...")
             
-            # Ждем появления первых карточек
-            while True:
+            # УМНОЕ ОЖИДАНИЕ: ждем появления карточек вместо фиксированной паузы
+            print("⏳ Ждем загрузки динамического контента...")
+            cards = []  # Инициализируем переменную
+            start_time = time.time()
+            while time.time() - start_time < 5:  # Максимум 5 секунд для динамического контента
                 cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
                 if cards:
+                    print(f"✅ Динамический контент загружен: {len(cards)} карточек")
                     break
-                time.sleep(0.1)  # Короткая пауза
+                time.sleep(0.2)  # Проверяем каждые 0.2 секунды
+            
+            # Ждем появления первых карточек с таймаутом (если еще не нашли)
+            if not cards:
+                start_time = time.time()
+                while time.time() - start_time < timeout:
+                    cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                    if cards:
+                        break
+                    time.sleep(0.1)  # Короткая пауза
+            
+            if time.time() - start_time >= timeout:
+                print(f"⚠️ Таймаут ожидания карточек (>{timeout}с), проверяем на пустую страницу...")
+                # Финальная проверка на пустую страницу
+                page_text = self.driver.page_source.lower()
+                if any(indicator in page_text for indicator in empty_indicators):
+                    print("ℹ️ Страница пустая - объявлений не найдено")
+                    return True
+                print("ℹ️ Карточки не найдены, но страница загружена")
+                return True
             
             # ДОПОЛНИТЕЛЬНАЯ пауза для стабилизации
             time.sleep(0.5)
@@ -634,12 +679,33 @@ class EnhancedMetroParser:
                 'ничего не найдено',
                 'по вашему запросу ничего не найдено',
                 'нет объявлений',
-                'объявления не найдены'
+                'объявления не найдены',
+                'не найдено',
+                'пустой результат',
+                'поиск не дал результатов',
+                'результатов поиска не найдено',
+                'объявления отсутствуют'
             ]
             
             if any(indicator in page_text for indicator in empty_indicators):
                 print("ℹ️ Страница пустая - объявлений не найдено")
                 return True  # Возвращаем True, чтобы корректно обработать пустую страницу
+            
+            # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: ждем появления карточек с таймаутом
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                if cards:
+                    print(f"✅ Карточки загружены: {len(cards)}")
+                    return True
+                time.sleep(0.5)  # Проверяем каждые 0.5 секунды
+            
+            # Если таймаут истек, проверяем еще раз на пустую страницу
+            print(f"⚠️ Таймаут ожидания карточек ({timeout}с), финальная проверка...")
+            page_text = self.driver.page_source.lower()
+            if any(indicator in page_text for indicator in empty_indicators):
+                print("ℹ️ Страница пустая - объявлений не найдено")
+                return True
             
             # Если ничего не нашли, считаем страницу загруженной
             print("ℹ️ Карточки не найдены, но страница загружена")
@@ -2649,6 +2715,17 @@ class EnhancedMetroParser:
             
             # Выводим сообщение о обработке страницы
             print(f"страница {page} ({metro_url}) обработана")
+            
+            # БЫСТРАЯ ПРОВЕРКА на пустую страницу перед ожиданием DOM
+            page_text = self.driver.page_source.lower()
+            empty_indicators = [
+                'объявлений не найдено', 'ничего не найдено', 'не найдено',
+                'пустой результат', 'поиск не дал результатов'
+            ]
+            
+            if any(indicator in page_text for indicator in empty_indicators):
+                print(f"ℹ️ Страница {page} пустая - объявлений не найдено")
+                return []
             
             # Ждем стабилизации DOM после загрузки страницы
             if not self.wait_for_dom_stability():
