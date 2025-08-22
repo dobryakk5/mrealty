@@ -380,6 +380,46 @@ class ListingsProcessor:
                 .close:hover {{
                     color: #bbb;
                 }}
+                
+                /* Кнопки навигации */
+                .nav-btn {{
+                    position: absolute;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    background: rgba(0,0,0,0.5);
+                    color: white;
+                    border: none;
+                    padding: 15px 10px;
+                    cursor: pointer;
+                    font-size: 18px;
+                    border-radius: 5px;
+                    transition: background 0.3s;
+                }}
+                
+                .nav-btn:hover {{
+                    background: rgba(0,0,0,0.8);
+                }}
+                
+                .prev-btn {{
+                    left: 20px;
+                }}
+                
+                .next-btn {{
+                    right: 20px;
+                }}
+                
+                /* Счетчик фото */
+                .photo-counter {{
+                    position: absolute;
+                    bottom: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    color: white;
+                    background: rgba(0,0,0,0.7);
+                    padding: 8px 15px;
+                    border-radius: 20px;
+                    font-size: 14px;
+                }}
                 .photo-fallback {{ 
                     width: 100%; 
                     height: 140px; 
@@ -431,6 +471,23 @@ class ListingsProcessor:
                         top: 10px;
                         right: 20px;
                         font-size: 30px;
+                    }}
+                    
+                    /* Мобильная адаптация для кнопок навигации */
+                    .nav-btn {{
+                        padding: 12px 8px;
+                        font-size: 16px;
+                    }}
+                    .prev-btn {{
+                        left: 10px;
+                    }}
+                    .next-btn {{
+                        right: 10px;
+                    }}
+                    .photo-counter {{
+                        bottom: 15px;
+                        font-size: 12px;
+                        padding: 6px 12px;
                     }}
                 }}
             </style>
@@ -488,7 +545,7 @@ class ListingsProcessor:
                                 <img src="data:image/{photo_data['format']};base64,{photo_data['base64']}" 
                                      alt="Фото {j}" 
                                      loading="lazy"
-                                     onclick="openPhotoModal('data:image/{photo_data['format']};base64,{photo_data['base64']}')"
+                                     onclick="openPhotoModal('data:image/{photo_data['format']};base64,{photo_data['base64']}', {j-1})"
                                      title="Кликните для увеличения">
                             </div>
                             """
@@ -540,18 +597,90 @@ class ListingsProcessor:
             <div id="photoModal" class="modal">
                 <span class="close">&times;</span>
                 <img class="modal-content" id="modalImage">
+                <button class="nav-btn prev-btn" id="prevBtn">‹</button>
+                <button class="nav-btn next-btn" id="nextBtn">›</button>
+                <div class="photo-counter" id="photoCounter"></div>
             </div>
             
             <script>
+                // Глобальные переменные для навигации
+                var allPhotos = [];
+                var currentPhotoIndex = 0;
+                
+                // Функция для сбора всех фото в массив
+                function collectAllPhotos() {{
+                    allPhotos = [];
+                    var photoItems = document.querySelectorAll('.photo-item img');
+                    photoItems.forEach(function(img) {{
+                        allPhotos.push(img.src);
+                    }});
+                    console.log('Собрано фото:', allPhotos.length);
+                }}
+                
+                // Собираем фото после загрузки страницы
+                window.addEventListener('load', collectAllPhotos);
+                
                 // Получаем элементы модального окна
                 var modal = document.getElementById("photoModal");
                 var modalImg = document.getElementById("modalImage");
                 var closeBtn = document.getElementsByClassName("close")[0];
+                var prevBtn = document.getElementById("prevBtn");
+                var nextBtn = document.getElementById("nextBtn");
+                var photoCounter = document.getElementById("photoCounter");
                 
                 // Функция для открытия фото в модальном окне
-                function openPhotoModal(photoSrc) {{
+                function openPhotoModal(photoSrc, photoIndex = 0) {{
+                    currentPhotoIndex = photoIndex;
                     modal.style.display = "block";
                     modalImg.src = photoSrc;
+                    updateNavigation();
+                }}
+                
+                // Функция для обновления навигации
+                function updateNavigation() {{
+                    if (allPhotos.length <= 1) {{
+                        prevBtn.style.display = "none";
+                        nextBtn.style.display = "none";
+                        photoCounter.style.display = "none";
+                    }} else {{
+                        prevBtn.style.display = "block";
+                        nextBtn.style.display = "block";
+                        photoCounter.style.display = "block";
+                        photoCounter.textContent = (currentPhotoIndex + 1) + " / " + allPhotos.length;
+                    }}
+                }}
+                
+                // Функция для перехода к предыдущему фото
+                function showPrevPhoto() {{
+                    if (currentPhotoIndex > 0) {{
+                        currentPhotoIndex--;
+                    }} else {{
+                        currentPhotoIndex = allPhotos.length - 1;
+                    }}
+                    modalImg.src = allPhotos[currentPhotoIndex];
+                    updateNavigation();
+                }}
+                
+                // Функция для перехода к следующему фото
+                function showNextPhoto() {{
+                    if (currentPhotoIndex < allPhotos.length - 1) {{
+                        currentPhotoIndex++;
+                    }} else {{
+                        currentPhotoIndex = 0;
+                    }}
+                    modalImg.src = allPhotos[currentPhotoIndex];
+                    updateNavigation();
+                }}
+                
+                // Обработчики событий для кнопок навигации
+                prevBtn.onclick = function(e) {{
+                    e.stopPropagation();
+                    showPrevPhoto();
+                }}
+                
+                nextBtn.onclick = function(e) {{
+                    e.stopPropagation();
+                    showNextPhoto();
                 }}
                 
                 // Закрытие по клику на крестик
@@ -570,6 +699,10 @@ class ListingsProcessor:
                 document.addEventListener('keydown', function(e) {{
                     if (e.key === 'Escape') {{
                         modal.style.display = "none";
+                    }} else if (e.key === 'ArrowLeft') {{
+                        showPrevPhoto();
+                    }} else if (e.key === 'ArrowRight') {{
+                        showNextPhoto();
                     }}
                 }});
             </script>
