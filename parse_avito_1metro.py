@@ -254,8 +254,8 @@ class EnhancedMetroParser:
             
             if result:
                 self.metro_avito_id = result['avito_id']
-                metro_name = result['name']
-                print(f"📍 Метро: {metro_name} (ID: {self.metro_id}, avito_id: {self.metro_avito_id})")
+                self.metro_name = result['name']
+                print(f"📍 Метро: {self.metro_name} (ID: {self.metro_id}, avito_id: {self.metro_avito_id})")
                 return True
             else:
                 print(f"❌ Метро с ID {self.metro_id} не найдено в БД")
@@ -264,6 +264,105 @@ class EnhancedMetroParser:
         except Exception as e:
             print(f"❌ Ошибка получения avito_id для метро: {e}")
             return False
+    
+    def get_total_pages_count(self, page_content=None):
+        """Определяет общее количество страниц для текущего метро из пагинации"""
+        try:
+            if page_content is None:
+                # Если контент страницы не передан, используем текущую страницу
+                page_content = self.driver
+            
+            total_pages = None
+            
+            # Метод 1: Поиск по пагинации (самый надежный)
+            try:
+                # Ищем элементы пагинации
+                pagination_elements = page_content.find_elements(By.CSS_SELECTOR, 
+                    '[data-marker="pagination-button"], .pagination-item, .pagination__item, .pagination-item')
+                
+                if pagination_elements:
+                    # Ищем последний элемент пагинации (обычно это последняя страница)
+                    page_numbers = []
+                    for elem in pagination_elements:
+                        try:
+                            # Пытаемся извлечь номер страницы из текста
+                            text = elem.text.strip()
+                            if text.isdigit():
+                                page_numbers.append(int(text))
+                            # Также проверяем атрибуты
+                            href = elem.get_attribute('href')
+                            if href and 'p=' in href:
+                                match = re.search(r'p=(\d+)', href)
+                                if match:
+                                    page_numbers.append(int(match.group(1)))
+                        except:
+                            continue
+                    
+                    if page_numbers:
+                        total_pages = max(page_numbers)
+                        print(f"📊 Найдено {total_pages} страниц по пагинации")
+            except Exception as e:
+                print(f"⚠️ Ошибка поиска по пагинации: {e}")
+            
+            # Метод 2: Поиск по счетчику объявлений и расчет
+            if total_pages is None:
+                try:
+                    # Ищем счетчик общего количества объявлений
+                    count_elements = page_content.find_elements(By.CSS_SELECTOR, 
+                        '[data-marker="page-title-count"], .page-title-count, .results-count, .search-results-count')
+                    
+                    for elem in count_elements:
+                        try:
+                            text = elem.text.strip()
+                            # Ищем число в тексте (например: "1 677 объявлений")
+                            match = re.search(r'(\d+(?:\s*\d+)*)', text)
+                            if match:
+                                total_ads = int(match.group(1).replace(' ', ''))
+                                # Обычно на странице 50 объявлений, рассчитываем количество страниц
+                                calculated_pages = (total_ads + 49) // 50  # Округляем вверх
+                                total_pages = calculated_pages
+                                print(f"📊 Рассчитано {total_pages} страниц по {total_ads} объявлениям")
+                                break
+                        except:
+                            continue
+                except Exception as e:
+                    print(f"⚠️ Ошибка расчета по счетчику объявлений: {e}")
+            
+            # Метод 3: Поиск по URL последней страницы
+            if total_pages is None:
+                try:
+                    # Ищем ссылку на последнюю страницу
+                    last_page_links = page_content.find_elements(By.CSS_SELECTOR, 
+                        'a[href*="p="], [data-marker="pagination-button"][href*="p="]')
+                    
+                    max_page = 1
+                    for link in last_page_links:
+                        try:
+                            href = link.get_attribute('href')
+                            if href and 'p=' in href:
+                                match = re.search(r'p=(\d+)', href)
+                                if match:
+                                    page_num = int(match.group(1))
+                                    max_page = max(max_page, page_num)
+                        except:
+                            continue
+                    
+                    if max_page > 1:
+                        total_pages = max_page
+                        print(f"📊 Найдено {total_pages} страниц по ссылкам")
+                except Exception as e:
+                    print(f"⚠️ Ошибка поиска по ссылкам: {e}")
+            
+            if total_pages:
+                print(f"🎯 Общее количество страниц для метро {self.metro_name}: {total_pages}")
+                return total_pages
+            else:
+                print(f"⚠️ Не удалось определить общее количество страниц для метро {self.metro_name}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Ошибка определения количества страниц: {e}")
+            return None
     
     def load_cookies(self):
         """Загружает зафиксированные cookies"""
@@ -2773,11 +2872,6 @@ class EnhancedMetroParser:
             cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
             print(f"📊 Найдено карточек: {len(cards)}")
             
-            # Если карточек нет, страница пустая - метро закончилось
-            if not cards:
-                print(f"🏁 Страница не содержит карточек - метро {self.metro_id} закончилось")
-                return []
-            
             # Парсим первые несколько карточек
             parsed_cards = []
             for i, card in enumerate(cards[:self.max_cards]):
@@ -2848,12 +2942,91 @@ class EnhancedMetroParser:
             # Выводим сообщение о обработке страницы
             print(f"страница {page} ({metro_url}) обработана")
             
-            # Короткая пауза для загрузки страницы (без ожидания DOM)
-            time.sleep(2)
+            # Увеличиваем время ожидания для загрузки страницы и DOM
+            print(f"⏳ Ожидаем загрузку страницы {page}...")
+            time.sleep(5)  # Увеличиваем с 2 до 5 секунд
+            
+            # Дополнительная проверка готовности страницы
+            try:
+                # Ждем появления хотя бы одного элемента, указывающего на загрузку
+                WebDriverWait(self.driver, 10).until(
+                    EC.any_of(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, '[data-marker="item"]')),
+                        EC.presence_of_element_located((By.CSS_SELECTOR, '.item')),
+                        EC.presence_of_element_located((By.CSS_SELECTOR, '[data-item-id]')),
+                        EC.presence_of_element_located((By.CSS_SELECTOR, '.iva-item'))
+                    )
+                )
+                print(f"✅ Страница {page} загружена и готова к парсингу")
+            except TimeoutException:
+                print(f"⚠️ Страница {page} загружается медленно, продолжаем...")
+            except Exception as e:
+                print(f"⚠️ Ошибка проверки готовности страницы {page}: {e}")
             
             # Получаем карточки - если их нет, страница пустая
             try:
                 cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                
+                # Если карточек не найдено, пробуем альтернативные селекторы
+                if not cards:
+                    print(f"⚠️ Основной селектор не дал результатов для страницы {page}, пробуем альтернативные...")
+                    
+                    # Альтернативный селектор 1: по классу
+                    try:
+                        cards = self.driver.find_elements(By.CSS_SELECTOR, '.item')
+                        if cards:
+                            print(f"✅ Найдено {len(cards)} карточек по альтернативному селектору '.item'")
+                    except:
+                        pass
+                    
+                    # Альтернативный селектор 2: по data-атрибуту
+                    if not cards:
+                        try:
+                            cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-item-id]')
+                            if cards:
+                                print(f"✅ Найдено {len(cards)} карточек по альтернативному селектору '[data-item-id]'")
+                        except:
+                            pass
+                    
+                    # Альтернативный селектор 3: по общему классу объявлений
+                    if not cards:
+                        try:
+                            cards = self.driver.find_elements(By.CSS_SELECTOR, '.iva-item')
+                            if cards:
+                                print(f"✅ Найдено {len(cards)} карточек по альтернативному селектору '.iva-item'")
+                        except:
+                            pass
+                    
+                    # Если все селекторы не дали результатов, ждем еще и пробуем снова
+                    if not cards:
+                        print(f"⚠️ Все селекторы не дали результатов для страницы {page}, ждем дополнительно...")
+                        time.sleep(5)  # Дополнительное ожидание
+                        
+                        # Повторная попытка с основным селектором
+                        try:
+                            cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+                            if cards:
+                                print(f"✅ После дополнительного ожидания найдено {len(cards)} карточек")
+                        except:
+                            pass
+                        
+                        # Если все еще нет, пробуем альтернативные селекторы снова
+                        if not cards:
+                            for selector in ['.item', '[data-item-id]', '.iva-item']:
+                                try:
+                                    cards = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                                    if cards:
+                                        print(f"✅ После ожидания найдено {len(cards)} карточек по селектору '{selector}'")
+                                        break
+                                except:
+                                    continue
+                
+                # Логируем результат поиска
+                if cards:
+                    print(f"📊 Найдено карточек на странице {page}: {len(cards)}")
+                else:
+                    print(f"⚠️ Карточки не найдены на странице {page} всеми способами")
+                    
             except Exception as e:
                 error_msg = str(e).lower()
                 if ('connection refused' in error_msg or 'errno 111' in error_msg or 
@@ -2877,10 +3050,13 @@ class EnhancedMetroParser:
                 else:
                     raise e  # Пробрасываем другие ошибки
             
-            # Если карточек нет, страница пустая - метро закончилось
-            if not cards:
-                print(f"🏁 Страница {page} не содержит карточек - метро {self.metro_id} закончилось")
-                return []
+            # Логируем результат поиска
+            if cards:
+                print(f"📊 Найдено карточек на странице {page}: {len(cards)}")
+            else:
+                print(f"⚠️ Карточки не найдены на странице {page}, но продолжаем парсинг")
+                        
+
             
             # ИСПОЛЬЗУЕМ ГИБРИДНЫЙ ПОДХОД с настраиваемыми параметрами
             if self.max_cards > 0:
@@ -2941,7 +3117,8 @@ class EnhancedMetroParser:
             all_parsed_cards = []
             page = start_page
             max_attempts = 100  # Защита от бесконечного цикла
-            consecutive_empty_pages = 0  # Счетчик подряд идущих пустых страниц
+
+            total_pages_known = False  # Флаг, что общее количество страниц известно
             
             if start_page > 1:
                 print(f"🚀 Начинаем парсинг с страницы {start_page}")
@@ -2961,22 +3138,21 @@ class EnhancedMetroParser:
                 print(f"📄 Обрабатываем страницу {page}...")
                 page_cards = self.parse_metro_page_by_number(page)
                 
-                # КРИТИЧЕСКАЯ ПРОВЕРКА: если на странице нет объявлений - метро закончилось
-                # Но только если это не результат восстановления браузера
-                if not page_cards:
-                    # Проверяем, не было ли это результатом ошибки соединения
-                    if hasattr(self, 'last_connection_error') and self.last_connection_error:
-                        print(f"🔄 Страница {page} вернула пустой результат после восстановления браузера, пробуем еще раз...")
-                        self.last_connection_error = False  # Сбрасываем флаг
-                        # Повторяем попытку для той же страницы
-                        continue
-                    else:
-                        consecutive_empty_pages += 1
-                        print(f"🏁 Страница {page} пустая - метро {self.metro_id} закончилось, завершаем парсинг")
-                        break
-                else:
-                    # Сбрасываем счетчик пустых страниц при успешном парсинге
-                    consecutive_empty_pages = 0
+                # На первой странице пытаемся определить общее количество страниц
+                if page == start_page and not total_pages_known:
+                    try:
+                        total_pages = self.get_total_pages_count()
+                        if total_pages:
+                            print(f"🎯 Автоматически определено общее количество страниц: {total_pages}")
+                            total_pages_known = True
+                            # Обновляем max_pages если он не был установлен или был меньше
+                            if self.max_pages == 0 or self.max_pages > total_pages:
+                                self.max_pages = total_pages
+                                print(f"📊 Установлен лимит страниц: {self.max_pages}")
+                    except Exception as e:
+                        print(f"⚠️ Не удалось определить общее количество страниц: {e}")
+                
+
                 
                 # Добавляем все карточки с этой страницы
                 all_parsed_cards.extend(page_cards)
@@ -3008,6 +3184,15 @@ class EnhancedMetroParser:
                                 continue
                         
                         print(f"✅ Страница {page}: сохранено {saved_count} из {len(page_cards)} карточек в БД")
+                        
+                        # Обновляем статус пагинации в БД
+                        try:
+                            from parse_todb_avito import update_avito_pagination
+                            await update_avito_pagination(self.metro_id, page)
+                            print(f"📊 Обновлен статус пагинации: страница {page} для метро {self.metro_id}")
+                        except Exception as e:
+                            print(f"⚠️ Не удалось обновить статус пагинации для страницы {page}: {e}")
+                        
                     except Exception as e:
                         print(f"❌ Ошибка сохранения страницы {page} в БД: {e}")
                 else:
@@ -3025,6 +3210,20 @@ class EnhancedMetroParser:
                 if self.max_pages == 0 or page <= self.max_pages:
                     time.sleep(self.page_delay)
             
+            # Выводим итоговую статистику по страницам
+            pages_processed = page - 1  # Вычитаем 1, так как page увеличился в конце цикла
+            print(f"\n📊 ИТОГОВАЯ СТАТИСТИКА ПО СТРАНИЦАМ:")
+            print(f"   • Всего страниц обработано: {pages_processed}")
+            print(f"   • Всего карточек спарсено: {len(all_parsed_cards)}")
+            if self.max_pages > 0:
+                print(f"   • Лимит страниц был установлен: {self.max_pages}")
+                if pages_processed >= self.max_pages:
+                    print(f"   • Лимит страниц достигнут ✅")
+                else:
+                    print(f"   • Лимит страниц НЕ достигнут (обработано {pages_processed} из {self.max_pages})")
+            else:
+                print(f"   • Лимит страниц не был установлен (парсили все доступные)")
+            
             return all_parsed_cards
             
         except Exception as e:
@@ -3034,11 +3233,28 @@ class EnhancedMetroParser:
     def print_statistics(self, parsed_cards):
         """Выводит статистику парсинга"""
         try:
-            print(f"\n📊 СТАТИСТИКА ПАРСИНГА:")
+            print(f"\n📊 ДЕТАЛЬНАЯ СТАТИСТИКА ПАРСИНГА:")
             print(f"   Метро ID: {self.metro_id}")
             print(f"   Метро avito_id: {self.metro_avito_id}")
-            print(f"   Страниц спарсено: {self.max_pages}")
+            print(f"   Метро название: {self.metro_name if hasattr(self, 'metro_name') else 'Неизвестно'}")
+            
+            # Рассчитываем количество страниц по карточкам
+            cards_per_page = self.max_cards if self.max_cards > 0 else 50  # По умолчанию 50 карточек на странице
+            estimated_pages = (len(parsed_cards) + cards_per_page - 1) // cards_per_page
+            
+            print(f"   Страниц спарсено (расчет): {estimated_pages}")
             print(f"   Карточек спарсено: {len(parsed_cards)}")
+            print(f"   Карточек на страницу: {cards_per_page}")
+            
+            # Информация о лимитах
+            if self.max_pages > 0:
+                print(f"   Лимит страниц был установлен: {self.max_pages}")
+                if estimated_pages >= self.max_pages:
+                    print(f"   Лимит страниц достигнут: ✅")
+                else:
+                    print(f"   Лимит страниц НЕ достигнут: ❌ (обработано {estimated_pages} из {self.max_pages})")
+            else:
+                print(f"   Лимит страниц не был установлен (парсили все доступные)")
             
             # Информация о БД
             if DB_AVAILABLE:
@@ -3098,8 +3314,12 @@ class EnhancedMetroParser:
             
             if parsed_cards:
                 # Данные уже сохранены постранично, выводим итоговую статистику
-                print(f"🎯 Всего обработано страниц: {len(parsed_cards) // (self.max_cards if self.max_cards > 0 else 25) + 1}")
-                print(f"📊 Общее количество карточек: {len(parsed_cards)}")
+                print(f"\n🎯 ИТОГОВЫЙ РЕЗУЛЬТАТ ПАРСИНГА:")
+                print(f"   • Метро: {self.metro_name if hasattr(self, 'metro_name') else 'Неизвестно'}")
+                print(f"   • Общее количество карточек: {len(parsed_cards)}")
+                
+                # Вызываем метод статистики для дополнительной информации
+                self.print_statistics(parsed_cards)
                 
                 return True
             else:

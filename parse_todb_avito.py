@@ -80,6 +80,27 @@ async def create_ads_avito_table() -> None:
             await conn.execute("ALTER TABLE ads_avito ADD COLUMN source_created TIMESTAMP")
         except Exception as e:
             pass
+        
+        # Создаем схему system если её нет
+        await conn.execute("CREATE SCHEMA IF NOT EXISTS system")
+        
+        # Создаем таблицу для отслеживания пагинации Авито
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS system.avito_pagination_tracking (
+            id SERIAL PRIMARY KEY,
+            metro_id INTEGER NOT NULL,
+            last_processed_page INTEGER DEFAULT 0,
+            total_pages_processed INTEGER DEFAULT 0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(metro_id)
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_avito_pagination_metro ON system.avito_pagination_tracking(metro_id);
+        CREATE INDEX IF NOT EXISTS idx_avito_pagination_updated ON system.avito_pagination_tracking(last_updated DESC);
+        """)
+        
+        print("[DB] Таблица system.avito_pagination_tracking создана успешно")
 
 
 async def convert_seller_type_to_number(seller_type):
@@ -326,3 +347,105 @@ async def save_avito_api_item(data: dict) -> None:
         except Exception as e:
             print(f"[DB] Ошибка сохранения в avito_api: {e}")
             return False
+
+# =============================================================================
+# ФУНКЦИИ ДЛЯ РАБОТЫ С ПАГИНАЦИЕЙ АВИТО
+# =============================================================================
+
+async def get_avito_pagination_status(metro_id: int) -> dict | None:
+    """Получает статус пагинации для конкретного метро"""
+    try:
+        pool = await _get_avito_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT metro_id, last_processed_page, total_pages_processed, last_updated
+                FROM system.avito_pagination_tracking
+                WHERE metro_id = $1
+            """, metro_id)
+            
+            if row:
+                return {
+                    'metro_id': row['metro_id'],
+                    'last_processed_page': row['last_processed_page'],
+                    'total_pages_processed': row['total_pages_processed'],
+                    'last_updated': row['last_updated']
+                }
+            return None
+            
+    except Exception as e:
+        print(f"❌ Ошибка получения статуса пагинации для метро {metro_id}: {e}")
+        return None
+
+async def update_avito_pagination(metro_id: int, page_number: int) -> bool:
+    """Обновляет статус пагинации для метро после обработки страницы"""
+    try:
+        pool = await _get_avito_pool()
+        async with pool.acquire() as conn:
+            # Используем UPSERT для обновления или создания записи
+            await conn.execute("""
+                INSERT INTO system.avito_pagination_tracking (metro_id, last_processed_page, total_pages_processed, last_updated)
+                VALUES ($1, $2, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT (metro_id) DO UPDATE SET
+                    last_processed_page = EXCLUDED.last_processed_page,
+                    total_pages_processed = system.avito_pagination_tracking.total_pages_processed + 1,
+                    last_updated = CURRENT_TIMESTAMP
+            """, metro_id, page_number)
+            
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка обновления пагинации для метро {metro_id}: {e}")
+        return False
+
+async def get_all_avito_pagination_status() -> list:
+    """Получает статус пагинации для всех метро"""
+    try:
+        pool = await _get_avito_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT metro_id, last_processed_page, total_pages_processed, last_updated
+                FROM system.avito_pagination_tracking
+                ORDER BY metro_id
+            """)
+            
+            result = []
+            for row in rows:
+                result.append({
+                    'metro_id': row['metro_id'],
+                    'last_processed_page': row['last_processed_page'],
+                    'total_pages_processed': row['total_pages_processed'],
+                    'last_updated': row['last_updated']
+                })
+            
+            return result
+            
+    except Exception as e:
+        print(f"❌ Ошибка получения статуса пагинации для всех метро: {e}")
+        return []
+
+async def reset_avito_pagination(metro_id: int = None) -> bool:
+    """Сбрасывает статус пагинации (для всех метро или конкретного)"""
+    try:
+        pool = await _get_avito_pool()
+        async with pool.acquire() as conn:
+            if metro_id:
+                # Сброс для конкретного метро
+                await conn.execute("""
+                    UPDATE system.avito_pagination_tracking
+                    SET last_processed_page = 0, total_pages_processed = 0, last_updated = CURRENT_TIMESTAMP
+                    WHERE metro_id = $1
+                """, metro_id)
+                print(f"✅ Сброшен статус пагинации для метро {metro_id}")
+            else:
+                # Сброс для всех метро
+                await conn.execute("""
+                    UPDATE system.avito_pagination_tracking
+                    SET last_processed_page = 0, total_pages_processed = 0, last_updated = CURRENT_TIMESTAMP
+                """)
+                print("✅ Сброшен статус пагинации для всех метро")
+            
+            return True
+            
+    except Exception as e:
+        print(f"❌ Ошибка сброса статуса пагинации: {e}")
+        return False
