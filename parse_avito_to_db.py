@@ -328,6 +328,7 @@ class MetroBatchParser:
                     print(f"   • Проверка is_msk: ✅ {expected_metro_id} московское метро")
                     
                     # Проверяем прогресс по страницам для этого метро
+                    # last_processed_page обновляется после каждой успешно обработанной страницы
                     try:
                         from parse_todb_avito import get_avito_pagination_status
                         pagination_status = await get_avito_pagination_status(expected_metro_id)
@@ -335,7 +336,9 @@ class MetroBatchParser:
                             # Есть прогресс по страницам, продолжаем со следующей
                             start_page = pagination_status['last_processed_page'] + 1
                             print(f"   • Прогресс по страницам: найдена страница {pagination_status['last_processed_page']}")
+                            print(f"   • Всего страниц обработано: {pagination_status['total_pages_processed']}")
                             print(f"   • Продолжаем с страницы: {start_page}")
+                            print(f"   • Последнее обновление: {pagination_status['last_updated']}")
                         else:
                             # Нет прогресса по страницам, начинаем с 1-й
                             start_page = 1

@@ -109,7 +109,6 @@ class EnhancedMetroParser:
         self.database_url = None
         self.metro_avito_id = None  # avito_id для этого метро
         self.tags_dictionary = None  # Кэш для словаря тегов
-        self.last_connection_error = False  # Флаг для отслеживания ошибок соединения
         
         # Устанавливаем DATABASE_URL из переменной окружения
         database_url = os.getenv('DATABASE_URL')
@@ -254,8 +253,8 @@ class EnhancedMetroParser:
             
             if result:
                 self.metro_avito_id = result['avito_id']
-                self.metro_name = result['name']
-                print(f"📍 Метро: {self.metro_name} (ID: {self.metro_id}, avito_id: {self.metro_avito_id})")
+                metro_name = result['name']
+                print(f"📍 Метро: {metro_name} (ID: {self.metro_id}, avito_id: {self.metro_avito_id})")
                 return True
             else:
                 print(f"❌ Метро с ID {self.metro_id} не найдено в БД")
@@ -264,105 +263,6 @@ class EnhancedMetroParser:
         except Exception as e:
             print(f"❌ Ошибка получения avito_id для метро: {e}")
             return False
-    
-    def get_total_pages_count(self, page_content=None):
-        """Определяет общее количество страниц для текущего метро из пагинации"""
-        try:
-            if page_content is None:
-                # Если контент страницы не передан, используем текущую страницу
-                page_content = self.driver
-            
-            total_pages = None
-            
-            # Метод 1: Поиск по пагинации (самый надежный)
-            try:
-                # Ищем элементы пагинации
-                pagination_elements = page_content.find_elements(By.CSS_SELECTOR, 
-                    '[data-marker="pagination-button"], .pagination-item, .pagination__item, .pagination-item')
-                
-                if pagination_elements:
-                    # Ищем последний элемент пагинации (обычно это последняя страница)
-                    page_numbers = []
-                    for elem in pagination_elements:
-                        try:
-                            # Пытаемся извлечь номер страницы из текста
-                            text = elem.text.strip()
-                            if text.isdigit():
-                                page_numbers.append(int(text))
-                            # Также проверяем атрибуты
-                            href = elem.get_attribute('href')
-                            if href and 'p=' in href:
-                                match = re.search(r'p=(\d+)', href)
-                                if match:
-                                    page_numbers.append(int(match.group(1)))
-                        except:
-                            continue
-                    
-                    if page_numbers:
-                        total_pages = max(page_numbers)
-                        print(f"📊 Найдено {total_pages} страниц по пагинации")
-            except Exception as e:
-                print(f"⚠️ Ошибка поиска по пагинации: {e}")
-            
-            # Метод 2: Поиск по счетчику объявлений и расчет
-            if total_pages is None:
-                try:
-                    # Ищем счетчик общего количества объявлений
-                    count_elements = page_content.find_elements(By.CSS_SELECTOR, 
-                        '[data-marker="page-title-count"], .page-title-count, .results-count, .search-results-count')
-                    
-                    for elem in count_elements:
-                        try:
-                            text = elem.text.strip()
-                            # Ищем число в тексте (например: "1 677 объявлений")
-                            match = re.search(r'(\d+(?:\s*\d+)*)', text)
-                            if match:
-                                total_ads = int(match.group(1).replace(' ', ''))
-                                # Обычно на странице 50 объявлений, рассчитываем количество страниц
-                                calculated_pages = (total_ads + 49) // 50  # Округляем вверх
-                                total_pages = calculated_pages
-                                print(f"📊 Рассчитано {total_pages} страниц по {total_ads} объявлениям")
-                                break
-                        except:
-                            continue
-                except Exception as e:
-                    print(f"⚠️ Ошибка расчета по счетчику объявлений: {e}")
-            
-            # Метод 3: Поиск по URL последней страницы
-            if total_pages is None:
-                try:
-                    # Ищем ссылку на последнюю страницу
-                    last_page_links = page_content.find_elements(By.CSS_SELECTOR, 
-                        'a[href*="p="], [data-marker="pagination-button"][href*="p="]')
-                    
-                    max_page = 1
-                    for link in last_page_links:
-                        try:
-                            href = link.get_attribute('href')
-                            if href and 'p=' in href:
-                                match = re.search(r'p=(\d+)', href)
-                                if match:
-                                    page_num = int(match.group(1))
-                                    max_page = max(max_page, page_num)
-                        except:
-                            continue
-                    
-                    if max_page > 1:
-                        total_pages = max_page
-                        print(f"📊 Найдено {total_pages} страниц по ссылкам")
-                except Exception as e:
-                    print(f"⚠️ Ошибка поиска по ссылкам: {e}")
-            
-            if total_pages:
-                print(f"🎯 Общее количество страниц для метро {self.metro_name}: {total_pages}")
-                return total_pages
-            else:
-                print(f"⚠️ Не удалось определить общее количество страниц для метро {self.metro_name}")
-                return None
-                
-        except Exception as e:
-            print(f"❌ Ошибка определения количества страниц: {e}")
-            return None
     
     def load_cookies(self):
         """Загружает зафиксированные cookies"""
@@ -531,188 +431,6 @@ class EnhancedMetroParser:
             print(f"❌ Ошибка перезагрузки браузера: {e}")
             return False
     
-    def restore_driver_connection(self):
-        """Восстанавливает соединение с WebDriver при потере соединения"""
-        try:
-            print("🔄 Восстанавливаем соединение с WebDriver...")
-            
-            # Устанавливаем флаг ошибки соединения
-            self.last_connection_error = True
-            
-            # Закрываем текущий драйвер
-            if self.driver:
-                try:
-                    self.driver.quit()
-                except:
-                    pass
-            
-            # Небольшая пауза
-            time.sleep(3)
-            
-            # Создаем новый драйвер
-            if not self.setup_selenium():
-                print("❌ Не удалось создать новый WebDriver")
-                return False
-            
-            # Применяем cookies заново
-            cookies_data = self.load_cookies()
-            if cookies_data:
-                if not self.apply_cookies(cookies_data):
-                    print("⚠️ Не удалось применить cookies после восстановления")
-            
-            # Возвращаемся на текущую страницу
-            if hasattr(self, 'current_page_url') and self.current_page_url:
-                try:
-                    self.driver.get(self.current_page_url)
-                    time.sleep(2)
-                    print("✅ Соединение восстановлено, вернулись на текущую страницу")
-                    return True
-                except Exception as e:
-                    print(f"⚠️ Не удалось вернуться на страницу: {e}")
-                    return False
-            
-            print("✅ Соединение восстановлено")
-            return True
-            
-        except Exception as e:
-            print(f"❌ Ошибка восстановления соединения: {e}")
-            return False
-    
-    def restore_driver_and_continue(self, current_page, metro_url):
-        """Восстанавливает WebDriver и возвращается на текущую страницу для продолжения парсинга"""
-        try:
-            print(f"🔄 Восстанавливаем WebDriver для продолжения парсинга со страницы {current_page}...")
-            
-            # Устанавливаем флаг ошибки соединения
-            self.last_connection_error = True
-            
-            # Закрываем текущий драйвер
-            if self.driver:
-                try:
-                    self.driver.quit()
-                except:
-                    pass
-            
-            # Небольшая пауза
-            time.sleep(3)
-            
-            # Создаем новый драйвер
-            if not self.setup_selenium():
-                print("❌ Не удалось создать новый WebDriver")
-                return False
-            
-            # Применяем cookies заново
-            cookies_data = self.load_cookies()
-            if cookies_data:
-                if not self.apply_cookies(cookies_data):
-                    print("⚠️ Не удалось применить cookies после восстановления")
-            
-            # Возвращаемся на текущую страницу
-            if metro_url:
-                try:
-                    self.driver.get(metro_url)
-                    time.sleep(2)
-                    print(f"✅ WebDriver восстановлен, вернулись на страницу {current_page}")
-                    return True
-                except Exception as e:
-                    print(f"⚠️ Не удалось вернуться на страницу {current_page}: {e}")
-                    return False
-            
-            print("✅ WebDriver восстановлен")
-            return True
-            
-        except Exception as e:
-            print(f"❌ Ошибка восстановления WebDriver: {e}")
-            return False
-    
-    def safe_parse_card_with_restore(self, card_element, card_index, max_retries=3):
-        """Парсит карточку с автоматическим восстановлением WebDriver при потере соединения"""
-        for attempt in range(max_retries):
-            try:
-                # Парсим карточку
-                card_data = self.parse_card(card_element)
-                if card_data:
-                    return card_data
-                else:
-                    print(f"⚠️ Карточка {card_index + 1} не дала данных")
-                    return None
-                    
-            except Exception as e:
-                error_msg = str(e).lower()
-                
-                # Проверяем на ошибку соединения
-                if 'connection refused' in error_msg or 'errno 111' in error_msg or 'max retries exceeded' in error_msg:
-                    print(f"🔄 Попытка {attempt + 1}/{max_retries}: WebDriver потерял соединение, восстанавливаем...")
-                    
-                    if not self.restore_driver_connection():
-                        print("❌ Не удалось восстановить WebDriver")
-                        return None
-                    
-                    # Получаем свежие элементы после восстановления
-                    try:
-                        fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                        if card_index < len(fresh_cards):
-                            card_element = fresh_cards[card_index]
-                            print(f"✅ Получены свежие элементы после восстановления")
-                        else:
-                            print(f"⚠️ Карточка {card_index + 1} недоступна после восстановления")
-                            return None
-                    except Exception as restore_error:
-                        print(f"❌ Ошибка получения элементов после восстановления: {restore_error}")
-                        return None
-                    
-                    time.sleep(2)  # Пауза после восстановления
-                    continue
-                    
-                # Для других ошибок (stale element, timeout) используем обычную retry логику
-                elif ('stale element' in error_msg or 'element not found' in error_msg or 'timeout' in error_msg) and attempt < max_retries - 1:
-                    print(f"🔄 Попытка {attempt + 1}/{max_retries}: {error_msg}, пробуем еще раз...")
-                    time.sleep(0.5)
-                    continue
-                else:
-                    print(f"❌ Ошибка карточки {card_index + 1}: {e}")
-                    return None
-        
-        return None
-    
-    def safe_parse_seller_info(self, card_element, card_data=None, max_retries=3):
-        """Безопасно парсит информацию о продавце с автоматическим восстановлением WebDriver при потере соединения"""
-        for attempt in range(max_retries):
-            try:
-                # Парсим информацию о продавце
-                seller_data = self.parse_seller_info(card_element, card_data)
-                return seller_data
-                    
-            except Exception as e:
-                error_msg = str(e).lower()
-                
-                # Проверяем на ошибку соединения
-                if 'connection refused' in error_msg or 'errno 111' in error_msg or 'max retries exceeded' in error_msg:
-                    print(f"🔄 Попытка {attempt + 1}/{max_retries}: WebDriver потерял соединение при парсинге продавца, восстанавливаем...")
-                    
-                    if not self.restore_driver_connection():
-                        print("❌ Не удалось восстановить WebDriver")
-                        return {
-                            'type': 'ошибка восстановления',
-                            'full_text': 'ошибка восстановления'
-                        }
-                    
-                    time.sleep(2)  # Пауза после восстановления
-                    continue
-                    
-                # Для других ошибок возвращаем пустой результат
-                else:
-                    print(f"⚠️ Ошибка парсинга продавца: {e}")
-                    return {
-                        'type': 'ошибка парсинга',
-                        'full_text': 'ошибка парсинга'
-                    }
-        
-        return {
-            'type': 'ошибка после всех попыток',
-            'full_text': 'ошибка после всех попыток'
-        }
-    
     def apply_cookies(self, cookies_data):
         """Применяет cookies к драйверу"""
         try:
@@ -866,72 +584,27 @@ class EnhancedMetroParser:
         print(f"[CONTEXT] Страница {page}: сгенерирован новый context")
         return metro_url
     
-    def wait_for_dom_stability(self, timeout=15):
-        """Ждет стабилизации DOM после загрузки страницы с таймаутом
-        
-        Оптимизированная версия: вместо фиксированной паузы в 1 секунду
-        использует умное ожидание появления карточек с таймаутом 5 секунд
-        """
+    def wait_for_dom_stability(self):
+        """Ждет стабилизации DOM после загрузки страницы (без таймаута)"""
         try:
             print("⏳ Ждем стабилизации DOM...")
             
-            # БЫСТРАЯ ПРОВЕРКА на пустую страницу
-            page_text = self.driver.page_source.lower()
-            empty_indicators = [
-                'объявлений не найдено',
-                'ничего не найдено',
-                'по вашему запросу ничего не найдено',
-                'нет объявлений',
-                'объявления не найдены',
-                'не найдено',
-                'пустой результат',
-                'поиск не дал результатов'
-            ]
-            
-            if any(indicator in page_text for indicator in empty_indicators):
-                print("ℹ️ Страница пустая - объявлений не найдено")
-                return True
-            
-            # Ждем полной загрузки страницы с таймаутом
-            start_time = time.time()
-            while time.time() - start_time < timeout:
+            # Ждем полной загрузки страницы
+            while True:
                 ready_state = self.driver.execute_script("return document.readyState")
                 if ready_state == "complete":
                     break
                 time.sleep(0.1)  # Короткая пауза
             
-            if time.time() - start_time >= timeout:
-                print(f"⚠️ Таймаут ожидания readyState (>{timeout}с), продолжаем...")
+            # Дополнительная пауза для JavaScript и динамического контента
+            time.sleep(1)
             
-            # УМНОЕ ОЖИДАНИЕ: ждем появления карточек вместо фиксированной паузы
-            print("⏳ Ждем загрузки динамического контента...")
-            cards = []  # Инициализируем переменную
-            start_time = time.time()
-            while time.time() - start_time < 5:  # Максимум 5 секунд для динамического контента
+            # Ждем появления первых карточек
+            while True:
                 cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
                 if cards:
-                    print(f"✅ Динамический контент загружен: {len(cards)} карточек")
                     break
-                time.sleep(0.2)  # Проверяем каждые 0.2 секунды
-            
-            # Ждем появления первых карточек с таймаутом (если еще не нашли)
-            if not cards:
-                start_time = time.time()
-                while time.time() - start_time < timeout:
-                    cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                    if cards:
-                        break
-                    time.sleep(0.1)  # Короткая пауза
-            
-            if time.time() - start_time >= timeout:
-                print(f"⚠️ Таймаут ожидания карточек (>{timeout}с), проверяем на пустую страницу...")
-                # Финальная проверка на пустую страницу
-                page_text = self.driver.page_source.lower()
-                if any(indicator in page_text for indicator in empty_indicators):
-                    print("ℹ️ Страница пустая - объявлений не найдено")
-                    return True
-                print("ℹ️ Карточки не найдены, но страница загружена")
-                return True
+                time.sleep(0.1)  # Короткая пауза
             
             # ДОПОЛНИТЕЛЬНАЯ пауза для стабилизации
             time.sleep(0.5)
@@ -961,33 +634,12 @@ class EnhancedMetroParser:
                 'ничего не найдено',
                 'по вашему запросу ничего не найдено',
                 'нет объявлений',
-                'объявления не найдены',
-                'не найдено',
-                'пустой результат',
-                'поиск не дал результатов',
-                'результатов поиска не найдено',
-                'объявления отсутствуют'
+                'объявления не найдены'
             ]
             
             if any(indicator in page_text for indicator in empty_indicators):
                 print("ℹ️ Страница пустая - объявлений не найдено")
                 return True  # Возвращаем True, чтобы корректно обработать пустую страницу
-            
-            # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: ждем появления карточек с таймаутом
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                if cards:
-                    print(f"✅ Карточки загружены: {len(cards)}")
-                    return True
-                time.sleep(0.5)  # Проверяем каждые 0.5 секунды
-            
-            # Если таймаут истек, проверяем еще раз на пустую страницу
-            print(f"⚠️ Таймаут ожидания карточек ({timeout}с), финальная проверка...")
-            page_text = self.driver.page_source.lower()
-            if any(indicator in page_text for indicator in empty_indicators):
-                print("ℹ️ Страница пустая - объявлений не найдено")
-                return True
             
             # Если ничего не нашли, считаем страницу загруженной
             print("ℹ️ Карточки не найдены, но страница загружена")
@@ -1257,7 +909,7 @@ class EnhancedMetroParser:
                             card = fresh_cards[i]
                             
                             # Парсим карточку
-                            card_data = self.safe_parse_card_with_restore(card, i)
+                            card_data = self.parse_card(card)
                             if card_data:
                                 card_data['card_number'] = i + 1
                                 card_data['raw_text'] = card.text.strip()
@@ -1273,8 +925,8 @@ class EnhancedMetroParser:
                                         fresh_cards_refresh = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
                                         if len(fresh_cards_refresh) > 0:
                                             first_card_refresh = fresh_cards_refresh[0]
-                                            # Парсим первую карточку безопасным способом
-                                            first_card_data = self.safe_parse_card_with_restore(first_card_refresh, 0)
+                                            # Парсим первую карточку обычным способом
+                                            first_card_data = self.parse_card(first_card_refresh)
                                             if first_card_data:
                                                 print("      ✅ Первая карточка успешно перепарсена для стабильности")
                                                 # ВАЖНО: Если первая карточка не была в результатах, добавляем её
@@ -1345,9 +997,7 @@ class EnhancedMetroParser:
                                 continue
                                 
                             card = fresh_cards[j]
-                            
-                            # Парсим карточку с автоматическим восстановлением при потере соединения
-                            card_data = self.safe_parse_card_with_restore(card, j)
+                            card_data = self.parse_card(card)
                             if card_data:
                                 card_data['card_number'] = j + 1
                                 card_data['raw_text'] = card.text.strip()
@@ -1368,7 +1018,7 @@ class EnhancedMetroParser:
                                     fresh_cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
                                     if j < len(fresh_cards):
                                         card = fresh_cards[j]
-                                        card_data = self.safe_parse_card_with_restore(card, j)
+                                        card_data = self.parse_card(card)
                                         if card_data:
                                             card_data['card_number'] = j + 1
                                             card_data['raw_text'] = card.text.strip()
@@ -1944,8 +1594,8 @@ class EnhancedMetroParser:
                         last_part = parts[-1].strip()
                         if 'реквизиты проверены' in last_part.lower():
                             seller_info['type'] = 'agency'  # Агентство
-                        elif 'документы проверены' in last_part.lower():
-                            seller_info['type'] = 'private'  # Частное лицо с проверенными документами
+                        elif 'проверено в росреестре' in last_part.lower():
+                            seller_info['type'] = 'owner'   # Собственник
                         else:
                             seller_info['type'] = 'unknown'
                         
@@ -2041,8 +1691,8 @@ class EnhancedMetroParser:
                         last_part = parts[-1].strip()
                         if 'реквизиты проверены' in last_part.lower():
                             seller_info['type'] = 'agency'  # Агентство
-                        elif 'документы проверены' in last_part.lower():
-                            seller_info['type'] = 'private'  # Частное лицо с проверенными документами
+                        elif 'проверено в росреестре' in last_part.lower():
+                            seller_info['type'] = 'owner'   # Собственник
                         else:
                             seller_info['type'] = 'unknown'
                         
@@ -2315,18 +1965,119 @@ class EnhancedMetroParser:
                         seller_name = line
                         # print(f"👤 Найдено ПОЛНОЕ имя продавца в строке с запятой: {seller_name}")
             
-            # Сохраняем найденную информацию
-            if seller_name:
-                person_info['name'] = seller_name
-            
-            # Сохраняем все строки с информацией о продавце
+            # Если нашли информацию о продавце в конце, используем её
             if seller_lines:
                 person_info['all_text_after_time'] = seller_lines
-            
-            # Сохраняем сырые строки для отладки
-            if 'raw_lines' not in person_info:
-                person_info['raw_lines'] = []
-            person_info['raw_lines'].append(line.strip())
+                person_info['raw_lines'] = seller_lines
+                
+                # ПРИОРИТЕТ: проверяем теги карточки на наличие "Собственник"
+                if 'tags' in card_data and card_data['tags']:
+                    tags_text = ' '.join(card_data['tags']).lower()
+                    if 'собственник' in tags_text:
+                        owner_from_tags = True
+
+                
+                # Анализируем найденную информацию
+                seller_name = None
+                for line in seller_lines:
+                    line_lower = line.lower()
+                    
+                    # Тип продавца (ПРИОРИТЕТ: если в тегах есть "Собственник", то тип = "собственник")
+                    # ЗАЩИЩАЕМ тип "собственник" от перезаписи, если он уже установлен из тегов
+                    if person_info.get('type') == 'собственник':
+                        # Если тип уже "собственник" из тегов, НЕ перезаписываем
+                        pass
+                    elif 'собственник' in line_lower:
+                        person_info['type'] = 'собственник'
+                    elif 'реквизиты проверены' in line_lower:
+                        person_info['type'] = 'агентство'
+                    elif 'документы проверены' in line_lower or 'частное лицо' in line_lower:
+                        person_info['type'] = 'частное лицо'
+                    
+                    # Количество объявлений
+                    if any(word in line_lower for word in ['завершённых', 'завершенных', 'объявлений']):
+                        count_match = re.search(r'(\d+)', line)
+                        if count_match:
+                            person_info['ads_count'] = int(count_match.group(1))
+                    
+                    # Ищем имя/название продавца (обычно это строка с запятой, но не служебная)
+                    if (',' in line and 
+                        not any(word in line_lower for word in ['завершённых', 'завершенных', 'объявлений', 'реквизиты проверены', 'документы проверены']) and
+                        len(line.strip()) > 3):
+                        # Берем первую часть до запятой как имя/название
+                        parts = [p.strip() for p in line.split(',')]
+                        first_part = parts[0]
+                        if (len(first_part) > 2 and 
+                            not any(word in first_part.lower() for word in ['проверено', 'росреестр', 'собственник', 'агентство', 'документы', 'лифт', 'парковка', 'балкон', 'двор', 'окна']) and
+                            not re.search(r'\d+', first_part)):
+                            person_info['name'] = first_part
+                            # print(f"👤 Найдено имя продавца: {first_part}")
+                
+                # ДОПОЛНИТЕЛЬНО: ищем информацию, которая идет после даты публикации, но перед количеством объявлений
+                additional_info = []
+                if time_line_index != -1:
+                    for i in range(time_line_index + 1, len(lines)):
+                        line = lines[i].strip()
+                        if not line:
+                            continue
+                        
+                        line_lower = line.lower()
+                        
+                        # Останавливаемся, когда находим количество объявлений
+                        if any(word in line_lower for word in ['завершённых', 'завершенных', 'объявлений']):
+                            break
+                        
+                        # Добавляем строку, если она не пустая и не служебная
+                        if (len(line) > 2 and 
+                            not any(word in line_lower for word in ['документы', 'реквизиты', 'лифт', 'парковка', 'балкон', 'двор', 'окна', 'написать', 'показать', 'телефон']) and
+                                        # Фильтруем относительные даты и временные выражения (точное совпадение слов)
+            not any(re.search(rf'\b{word}\b', line_lower) for word in ['вчера', 'сегодня', 'позавчера', 'час', 'день', 'месяц', 'назад']) and
+                            # Фильтруем слова, связанные с неделями (точное совпадение)
+                            not any(re.search(rf'\b{word}\b', line_lower) for word in ['неделя', 'недели', 'недель']) and
+                                        # Фильтруем числовые временные выражения типа "1 час назад", "7 дней назад"
+            not re.search(r'\d+\s*(час|часа|часов|месяц|месяца|месяцев)', line_lower) and
+                            not re.search(r'\d+', line)):
+                            additional_info.append(line)
+                
+                # Формируем поле Person: дополнительная информация + основная информация
+                if additional_info:
+                    if seller_name:
+                        # Если нашли имя продавца, добавляем дополнительную информацию
+                        person_info['clean_person'] = ', '.join(additional_info) + ' | ' + seller_name
+                    else:
+                        # Если имя не найдено, используем дополнительную информацию
+                        person_info['clean_person'] = ', '.join(additional_info)
+                else:
+                    # Если дополнительной информации нет, используем стандартную логику
+                    if seller_name:
+                        person_info['clean_person'] = seller_name
+                        person_info['name'] = seller_name
+                    else:
+                        # Если имя не найдено, используем первую неслужебную строку
+                        clean_lines = []
+                        for line in seller_lines:
+                            line_lower = line.lower()
+                            if not any(word in line_lower for word in ['завершённых', 'завершенных', 'объявлений', 'реквизиты проверены', 'документы проверены', 'проверено в росреестре']):
+                                clean_lines.append(line.strip())
+                        
+                        if clean_lines:
+                            person_info['clean_person'] = clean_lines[0]
+                        else:
+                            # Если ничего не нашли, создаем обобщенное описание
+                            if person_info.get('type') == 'агентство':
+                                person_info['clean_person'] = 'Агентство недвижимости'
+                            elif person_info.get('type') == 'частное лицо':
+                                person_info['clean_person'] = 'Частное лицо'
+                            elif person_info.get('type') == 'собственник':
+                                person_info['clean_person'] = 'Собственник'
+                            else:
+                                person_info['clean_person'] = 'Продавец'
+                
+                # Также сохраняем отдельные поля для совместимости
+                if line.strip() and line not in person_info.get('raw_lines', []):
+                    if 'raw_lines' not in person_info:
+                        person_info['raw_lines'] = []
+                    person_info['raw_lines'].append(line.strip())
             
             # Если тип продавца не определен, устанавливаем "частное лицо" по умолчанию
             if not person_info.get('type') or person_info.get('type') == 'не определено':
@@ -2335,16 +2086,8 @@ class EnhancedMetroParser:
             return person_info
             
         except Exception as e:
-            error_msg = str(e).lower()
-            
-            # Проверяем на ошибку соединения
-            if 'connection refused' in error_msg or 'errno 111' in error_msg or 'max retries exceeded' in error_msg:
-                print(f"⚠️ WebDriver потерял соединение при поиске информации о продавце: {e}")
-                # Возвращаем пустой результат, чтобы вызывающий код мог обработать восстановление
-                return {}
-            else:
-                print(f"⚠️ Ошибка поиска информации о продавце: {e}")
-                return {}
+            print(f"⚠️ Ошибка поиска информации о продавце: {e}")
+            return {}
     
     def determine_seller_type(self, params_text):
         """Определяет тип продавца из текста характеристик"""
@@ -2757,7 +2500,7 @@ class EnhancedMetroParser:
                 card_data['published_time'] = "Не найдено"
             
             # Информация о продавце
-            seller_info = self.safe_parse_seller_info(card_element, card_data)
+            seller_info = self.parse_seller_info(card_element, card_data)
             
             # Объединяем информацию о продавце, избегая дублирования
             if seller_info:
@@ -2868,7 +2611,12 @@ class EnhancedMetroParser:
             current_url = self.driver.current_url
             print(f"📍 Текущий URL: {current_url}")
             
-            # Получаем все карточки (без ожидания загрузки)
+            # Ждем загрузки карточек
+            if not self.wait_for_cards_load():
+                print("❌ Не удалось дождаться загрузки карточек")
+                return []
+            
+            # Получаем все карточки
             cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
             print(f"📊 Найдено карточек: {len(cards)}")
             
@@ -2889,116 +2637,35 @@ class EnhancedMetroParser:
             return []
     
     def parse_metro_page_by_number(self, page=1):
-        """Парсит конкретную страницу с метро по номеру
-        
-        ОПТИМИЗАЦИЯ: Ожидание DOM стабилизации убрано для ускорения.
-        Пустые страницы определяются по отсутствию элементов [data-marker="item"].
-        """
+        """Парсит конкретную страницу с метро по номеру"""
         try:
             # Получаем URL для конкретной страницы
             metro_url = self.get_metro_url_with_page(page)
             if not metro_url:
                 return []
             
-            # Сохраняем текущий URL для возможного восстановления
-            self.current_page_url = metro_url
-            
-            # Профилактический рестарт браузера каждые 10 страниц
-            if page % 10 == 0:
-                print(f"🔄 Профилактический рестарт браузера на странице {page}...")
-                if not self.restore_driver_connection():
-                    print("❌ Не удалось выполнить профилактический рестарт браузера")
-                    return []
-                print("✅ Профилактический рестарт браузера выполнен успешно")
-                # После профилактического рестарта браузер уже находится на нужной странице
-                # Пропускаем повторный переход
-                skip_page_navigation = True
-            else:
-                skip_page_navigation = False
-            
-            # Переходим на страницу (только если не был выполнен профилактический рестарт)
-            if not skip_page_navigation:
-                try:
-                    self.driver.get(metro_url)
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    if ('connection refused' in error_msg or 'errno 111' in error_msg or 
-                        'max retries exceeded' in error_msg or 'read timeout' in error_msg or
-                        'timeout' in error_msg):
-                        
-                        print(f"🔄 Ошибка соединения при переходе на страницу {page}: {e}")
-                        print("🔄 Выполняем рестарт браузера для продолжения парсинга...")
-                        
-                        if self.restore_driver_and_continue(page, metro_url):
-                            print(f"✅ Браузер восстановлен, продолжаем парсинг страницы {page}")
-                            # Продолжаем с той же страницы, но не вызываем рекурсивно
-                            # Просто продолжаем выполнение текущего метода
-                        else:
-                            print(f"❌ Не удалось восстановить браузер для страницы {page}")
-                            return []
-                    else:
-                        raise e  # Пробрасываем другие ошибки
+            # Переходим на страницу
+            self.driver.get(metro_url)
             
             # Выводим сообщение о обработке страницы
             print(f"страница {page} ({metro_url}) обработана")
             
-            # Увеличиваем время ожидания для загрузки страницы и DOM
-            print(f"⏳ Ожидаем загрузку страницы {page}...")
-            time.sleep(5)  # Увеличиваем с 2 до 5 секунд
+            # Ждем стабилизации DOM после загрузки страницы
+            if not self.wait_for_dom_stability():
+                print(f"❌ Не удалось дождаться стабилизации DOM на странице {page}")
+                return []
             
-            # Дополнительная проверка готовности страницы
-            # Простая и надежная логика загрузки карточек (как в старой версии)
-            try:
-                # Ждем стабилизации DOM после загрузки страницы
-                if not self.wait_for_dom_stability():
-                    print(f"❌ Не удалось дождаться стабилизации DOM на странице {page}")
-                    return []
-                
-                # Ждем загрузки карточек
-                if not self.wait_for_cards_load():
-                    print(f"❌ Не удалось дождаться загрузки карточек на странице {page}")
-                    return []
-                
-                # Получаем все загруженные карточки
-                cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                
-                # Если карточек нет, возвращаем пустой список
-                if not cards:
-                    print(f"ℹ️ Страница {page} не содержит карточек")
-                    return []
-                
-                print(f"📊 Найдено карточек на странице {page}: {len(cards)}")
-                    
-            except Exception as e:
-                error_msg = str(e).lower()
-                if ('connection refused' in error_msg or 'errno 111' in error_msg or 
-                    'max retries exceeded' in error_msg or 'read timeout' in error_msg or
-                    'timeout' in error_msg):
-                    
-                    print(f"🔄 Ошибка соединения при поиске элементов на странице {page}: {e}")
-                    print("🔄 Выполняем рестарт браузера для продолжения парсинга...")
-                    
-                    if self.restore_driver_and_continue(page, metro_url):
-                        print(f"✅ Браузер восстановлен, продолжаем поиск элементов на странице {page}")
-                        # Повторяем поиск элементов после восстановления
-                        try:
-                            cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
-                        except Exception as retry_error:
-                            print(f"❌ Ошибка поиска элементов после восстановления: {retry_error}")
-                            return []
-                    else:
-                        print(f"❌ Не удалось восстановить браузер для страницы {page}")
-                        return []
-                else:
-                    raise e  # Пробрасываем другие ошибки
+            # Ждем загрузки карточек
+            if not self.wait_for_cards_load():
+                return []
             
-            # Логируем результат поиска
-            if cards:
-                print(f"📊 Найдено карточек на странице {page}: {len(cards)}")
-            else:
-                print(f"⚠️ Карточки не найдены на странице {page}, но продолжаем парсинг")
-                        
-
+            # Получаем все загруженные карточки
+            cards = self.driver.find_elements(By.CSS_SELECTOR, '[data-marker="item"]')
+            
+            # Если карточек нет, возвращаем пустой список
+            if not cards:
+                print(f"ℹ️ Страница {page} не содержит карточек")
+                return []
             
             # ИСПОЛЬЗУЕМ ГИБРИДНЫЙ ПОДХОД с настраиваемыми параметрами
             if self.max_cards > 0:
@@ -3016,41 +2683,14 @@ class EnhancedMetroParser:
             return parsed_cards
             
         except Exception as e:
-            error_msg = str(e).lower()
-            
-            # Проверяем на ошибки соединения
-            if ('connection refused' in error_msg or 'errno 111' in error_msg or 
-                'max retries exceeded' in error_msg or 'read timeout' in error_msg or
-                'timeout' in error_msg):
-                
-                print(f"🔄 Ошибка соединения на странице {page}: {e}")
-                print("🔄 Выполняем рестарт браузера для продолжения парсинга...")
-                
-                if self.restore_driver_and_continue(page, metro_url):
-                    print(f"✅ Браузер восстановлен, продолжаем парсинг страницы {page}")
-                    # Возвращаем пустой результат, чтобы вызывающий код мог обработать восстановление
-                    # и повторить попытку для той же страницы
-                    return []
-                else:
-                    print(f"❌ Не удалось восстановить браузер для страницы {page}")
-                    return []
-            else:
-                print(f"❌ Ошибка парсинга страницы {page}: {e}")
-                return []
+            print(f"❌ Ошибка парсинга страницы {page}: {e}")
+            return []
     
     async def parse_multiple_pages(self, start_page=1):
         """Парсит несколько страниц с метро
         
         Данные сохраняются в БД после каждой страницы для обеспечения
         надежности и возможности возобновления парсинга с любой страницы.
-        
-        ОПТИМИЗАЦИЯ: Перезагрузка браузера каждые 4 страницы убрана
-        для ускорения процесса парсинга.
-        
-        ОПТИМИЗАЦИЯ: Ожидание DOM стабилизации убрано для ускорения.
-        Пустые страницы определяются по отсутствию элементов [data-marker="item"].
-        ЛОГИКА: При обнаружении пустой страницы парсинг метро завершается,
-        так как это означает, что для данного метро больше нет объявлений.
         
         Args:
             start_page (int): Номер страницы, с которой начать парсинг (по умолчанию 1)
@@ -3059,8 +2699,6 @@ class EnhancedMetroParser:
             all_parsed_cards = []
             page = start_page
             max_attempts = 100  # Защита от бесконечного цикла
-
-            total_pages_known = False  # Флаг, что общее количество страниц известно
             
             if start_page > 1:
                 print(f"🚀 Начинаем парсинг с страницы {start_page}")
@@ -3077,31 +2715,16 @@ class EnhancedMetroParser:
                     break
                 
                 # Парсим текущую страницу
-                print(f"📄 Обрабатываем страницу {page}...")
                 page_cards = self.parse_metro_page_by_number(page)
                 
-                # На первой странице пытаемся определить общее количество страниц
-                if page == start_page and not total_pages_known:
-                    try:
-                        total_pages = self.get_total_pages_count()
-                        if total_pages:
-                            print(f"🎯 Автоматически определено общее количество страниц: {total_pages}")
-                            total_pages_known = True
-                            # Обновляем max_pages если он не был установлен или был меньше
-                            if self.max_pages == 0 or self.max_pages > total_pages:
-                                self.max_pages = total_pages
-                                print(f"📊 Установлен лимит страниц: {self.max_pages}")
-                    except Exception as e:
-                        print(f"⚠️ Не удалось определить общее количество страниц: {e}")
-                
-
+                # ПРОСТАЯ ЛОГИКА: если на странице нет объявлений - останавливаемся
+                if not page_cards:
+                    print(f"❌ Страница {page} пустая (нет объявлений), останавливаемся")
+                    break
                 
                 # Добавляем все карточки с этой страницы
                 all_parsed_cards.extend(page_cards)
                 print(f"📄 Страница {page}: {len(page_cards)} карточек")
-                
-                # Сбрасываем флаг ошибки соединения при успешном парсинге
-                self.last_connection_error = False
                 
                 # СОХРАНЯЕМ ДАННЫЕ В БД ПОСЛЕ КАЖДОЙ СТРАНИЦЫ
                 if self.enable_db_save and DB_AVAILABLE:
@@ -3126,15 +2749,6 @@ class EnhancedMetroParser:
                                 continue
                         
                         print(f"✅ Страница {page}: сохранено {saved_count} из {len(page_cards)} карточек в БД")
-                        
-                        # Обновляем статус пагинации в БД
-                        try:
-                            from parse_todb_avito import update_avito_pagination
-                            await update_avito_pagination(self.metro_id, page)
-                            print(f"📊 Обновлен статус пагинации: страница {page} для метро {self.metro_id}")
-                        except Exception as e:
-                            print(f"⚠️ Не удалось обновить статус пагинации для страницы {page}: {e}")
-                        
                     except Exception as e:
                         print(f"❌ Ошибка сохранения страницы {page} в БД: {e}")
                 else:
@@ -3145,26 +2759,18 @@ class EnhancedMetroParser:
                     print(f"📄 Достигнут лимит страниц ({self.max_pages}), останавливаемся")
                     break
                 
+                # Перезагружаем браузер каждые 4 страницы для стабильности
+                if page % 4 == 0:
+                    print(f"🔄 Страница {page} - перезагружаем браузер для стабильности")
+                    if not self.reload_browser():
+                        print("❌ Не удалось перезагрузить браузер, продолжаем...")
+                
                 # Переходим к следующей странице
                 page += 1
                 
-                # Задержка между страницами (перезагрузка браузера убрана для ускорения)
+                # Задержка между страницами
                 if self.max_pages == 0 or page <= self.max_pages:
                     time.sleep(self.page_delay)
-            
-            # Выводим итоговую статистику по страницам
-            pages_processed = page - 1  # Вычитаем 1, так как page увеличился в конце цикла
-            print(f"\n📊 ИТОГОВАЯ СТАТИСТИКА ПО СТРАНИЦАМ:")
-            print(f"   • Всего страниц обработано: {pages_processed}")
-            print(f"   • Всего карточек спарсено: {len(all_parsed_cards)}")
-            if self.max_pages > 0:
-                print(f"   • Лимит страниц был установлен: {self.max_pages}")
-                if pages_processed >= self.max_pages:
-                    print(f"   • Лимит страниц достигнут ✅")
-                else:
-                    print(f"   • Лимит страниц НЕ достигнут (обработано {pages_processed} из {self.max_pages})")
-            else:
-                print(f"   • Лимит страниц не был установлен (парсили все доступные)")
             
             return all_parsed_cards
             
@@ -3175,28 +2781,11 @@ class EnhancedMetroParser:
     def print_statistics(self, parsed_cards):
         """Выводит статистику парсинга"""
         try:
-            print(f"\n📊 ДЕТАЛЬНАЯ СТАТИСТИКА ПАРСИНГА:")
+            print(f"\n📊 СТАТИСТИКА ПАРСИНГА:")
             print(f"   Метро ID: {self.metro_id}")
             print(f"   Метро avito_id: {self.metro_avito_id}")
-            print(f"   Метро название: {self.metro_name if hasattr(self, 'metro_name') else 'Неизвестно'}")
-            
-            # Рассчитываем количество страниц по карточкам
-            cards_per_page = self.max_cards if self.max_cards > 0 else 50  # По умолчанию 50 карточек на странице
-            estimated_pages = (len(parsed_cards) + cards_per_page - 1) // cards_per_page
-            
-            print(f"   Страниц спарсено (расчет): {estimated_pages}")
+            print(f"   Страниц спарсено: {self.max_pages}")
             print(f"   Карточек спарсено: {len(parsed_cards)}")
-            print(f"   Карточек на страницу: {cards_per_page}")
-            
-            # Информация о лимитах
-            if self.max_pages > 0:
-                print(f"   Лимит страниц был установлен: {self.max_pages}")
-                if estimated_pages >= self.max_pages:
-                    print(f"   Лимит страниц достигнут: ✅")
-                else:
-                    print(f"   Лимит страниц НЕ достигнут: ❌ (обработано {estimated_pages} из {self.max_pages})")
-            else:
-                print(f"   Лимит страниц не был установлен (парсили все доступные)")
             
             # Информация о БД
             if DB_AVAILABLE:
@@ -3256,12 +2845,8 @@ class EnhancedMetroParser:
             
             if parsed_cards:
                 # Данные уже сохранены постранично, выводим итоговую статистику
-                print(f"\n🎯 ИТОГОВЫЙ РЕЗУЛЬТАТ ПАРСИНГА:")
-                print(f"   • Метро: {self.metro_name if hasattr(self, 'metro_name') else 'Неизвестно'}")
-                print(f"   • Общее количество карточек: {len(parsed_cards)}")
-                
-                # Вызываем метод статистики для дополнительной информации
-                self.print_statistics(parsed_cards)
+                print(f"🎯 Всего обработано страниц: {len(parsed_cards) // (self.max_cards if self.max_cards > 0 else 25) + 1}")
+                print(f"📊 Общее количество карточек: {len(parsed_cards)}")
                 
                 return True
             else:
@@ -3270,9 +2855,6 @@ class EnhancedMetroParser:
                 
         except Exception as e:
             print(f"❌ Ошибка работы парсера: {e}")
-            print(f"💡 Для возобновления парсинга с последней успешной страницы используйте:")
-            print(f"   • start_page = {self.max_pages if self.max_pages > 0 else 'последняя обработанная страница'}")
-            print(f"   • Или укажите конкретную страницу в параметре start_page")
             return False
         finally:
             if self.driver:
@@ -3561,10 +3143,6 @@ async def main():
             print("\n🎉 Парсинг завершен успешно!")
         else:
             print("\n❌ Парсинг завершен с ошибками")
-            print("\n💡 Для возобновления парсинга:")
-            print(f"   • Измените start_page в коде на нужную страницу")
-            print(f"   • Или используйте: start_page = {parser.max_pages if parser.max_pages > 0 else 'последняя обработанная страница'}")
-            print(f"   • Текущие настройки: max_pages = {parser.max_pages}, metro_id = {parser.metro_id}")
             
     except KeyboardInterrupt:
         print("\n⚠️ Парсинг прерван пользователем")
