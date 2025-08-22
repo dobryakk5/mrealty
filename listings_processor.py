@@ -569,13 +569,13 @@ class ListingsProcessor:
         # Собираем статистику по фото для каждого объявления
         photo_stats = []
         
-        # Глобальный набор для отслеживания уже использованных фото (между объявлениями)
-        global_seen_photos = set()
-        
         for i, listing_url in enumerate(listing_urls, 1):
             try:
+                print(f"🔍 Обрабатываю объявление {i}: {listing_url}")
+                
                 # Получаем фото для этого объявления
                 photo_urls = await self.extract_photo_urls_from_url(listing_url)
+                print(f"📸 Найдено URL фото для объявления {i}: {len(photo_urls)}")
                 
                 if photo_urls:
                     # Ограничиваем количество фото если указано
@@ -589,19 +589,9 @@ class ListingsProcessor:
                     else:
                         processed_photos = self.photo_processor.process_photos_for_embedded_html(photo_urls, remove_watermarks=False)
                     
-                    # Дополнительная проверка на дублирование между объявлениями
-                    unique_processed_photos = []
-                    for photo in processed_photos:
-                        if photo and 'base64' in photo:
-                            photo_key = f"{photo['base64'][:50]}..."  # Первые 50 символов base64 как ключ
-                            if photo_key not in global_seen_photos:
-                                global_seen_photos.add(photo_key)
-                                unique_processed_photos.append(photo)
-                            else:
-                                print(f"⚠️  Пропускаем дубликат фото между объявлениями в объявлении {i}")
-                    
-                    # Используем уникальные фото
-                    processed_photos = unique_processed_photos
+                    # Проверка на дублирование внутри объявления (оставляем только эту проверку)
+                    # Убираем глобальную проверку между объявлениями, так как она может блокировать легитимные фото
+                    print(f"📸 Обработано фото для объявления {i}: {len(processed_photos)}")
                     
                     # Извлекаем информацию об объявлении
                     listing_info = self.extract_listing_info(listing_url)

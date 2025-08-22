@@ -32,39 +32,35 @@ def extract_listing_comments(text: str, urls: list[str]) -> list[str]:
     # Сортируем по позиции
     url_positions.sort(key=lambda x: x[0])
     
-    # Извлекаем комментарии между ссылками
+    # Извлекаем комментарии для каждого объявления
     for i in range(len(url_positions)):
         current_pos, current_url = url_positions[i]
         
         if i == 0:
-            # Для первого объявления - комментарий отсутствует (до первой ссылки это subtitle)
-            comment = ""
+            # Для первого объявления - комментарий после первой ссылки
+            # Ищем следующую ссылку или конец текста
+            if i + 1 < len(url_positions):
+                next_pos = url_positions[i + 1][0]
+                comment = text[current_pos + len(current_url):next_pos].strip()
+            else:
+                # Если это единственная ссылка, берем текст после неё
+                comment = text[current_pos + len(current_url):].strip()
         else:
-            # Для остальных объявлений - текст между предыдущей и текущей ссылкой
-            prev_pos, prev_url = url_positions[i-1]
-            comment = text[prev_pos + len(prev_url):current_pos].strip()
-            
-            # Очищаем комментарий от лишних символов
-            comment = comment.replace("подбор", "").replace("подбор-", "").strip()
-            # Убираем цифры в начале комментария (ограничения фото)
-            comment = re.sub(r'^\d+\s*', '', comment).strip()
-        
-        # Добавляем комментарий (может быть пустым)
-        comments.append(comment)
-    
-    # Добавляем комментарий для последнего объявления (текст после последней ссылки)
-    if url_positions:
-        last_pos, last_url = url_positions[-1]
-        last_comment = text[last_pos + len(last_url):].strip()
+            # Для остальных объявлений - текст между текущей и следующей ссылкой
+            if i + 1 < len(url_positions):
+                next_pos = url_positions[i + 1][0]
+                comment = text[current_pos + len(current_url):next_pos].strip()
+            else:
+                # Для последнего объявления - текст после последней ссылки
+                comment = text[current_pos + len(current_url):].strip()
         
         # Очищаем комментарий от лишних символов
-        last_comment = last_comment.replace("подбор", "").replace("подбор-", "").strip()
+        comment = comment.replace("подбор", "").replace("подбор-", "").strip()
         # Убираем цифры в начале комментария (ограничения фото)
-        last_comment = re.sub(r'^\d+\s*', '', last_comment).strip()
+        comment = re.sub(r'^\d+\s*', '', comment).strip()
         
-        # Если есть текст после последней ссылки, добавляем его как комментарий к следующему объявлению
-        if len(comments) < len(urls):
-            comments.append(last_comment)
+        # Добавляем комментарий
+        comments.append(comment)
     
     # Дополняем пустыми комментариями до нужного количества
     while len(comments) < len(urls):
