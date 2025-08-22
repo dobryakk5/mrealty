@@ -139,25 +139,40 @@ class PhotoProcessor:
             # Создаем новый слой для текста
             draw = ImageDraw.Draw(pil_image)
             
-            # Пытаемся использовать системный шрифт, если не получится - используем дефолтный
-            try:
-                # Попробуем найти подходящий шрифт
-                font_size = min((x2-x1) // 8, (y2-y1) // 3)  # Базовый размер шрифта
-                # Увеличиваем размер шрифта на 50%, затем еще в 2 раза, затем еще на 20% (итого в 3.6 раза)
-                font_size = int(font_size * 1.5 * 2 * 1.2)
-                font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", font_size)
-            except:
+            # Пытаемся использовать стандартные шрифты, доступные на всех системах
+            font_size = min((x2-x1) // 8, (y2-y1) // 3)  # Базовый размер шрифта
+            # Увеличиваем размер шрифта на 50%, затем еще в 2 раза, затем еще на 20% (итого в 3.6 раза)
+            font_size = int(font_size * 1.5 * 2 * 1.2)
+            
+            # Список стандартных шрифтов для разных систем
+            font_paths = [
+                # Linux стандартные шрифты
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+                # macOS стандартные шрифты
+                "/System/Library/Fonts/Arial.ttf",
+                "/System/Library/Fonts/Helvetica.ttc",
+                # Windows стандартные шрифты (если запускается на Windows)
+                "C:/Windows/Fonts/arial.ttf",
+                "C:/Windows/Fonts/calibri.ttf"
+            ]
+            
+            font = None
+            for font_path in font_paths:
                 try:
-                    font_size = min((x2-x1) // 10, (y2-y1) // 4)  # Базовый размер шрифта
-                    # Увеличиваем размер шрифта на 50%, затем еще в 2 раза, затем еще на 20% (итого в 3.6 раза)
-                    font_size = int(font_size * 1.5 * 2 * 1.2)
-                    font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
+                    font = ImageFont.truetype(font_path, font_size)
+                    print(f"✅ Используется шрифт: {font_path}")
+                    break
                 except:
-                    # Используем дефолтный шрифт
-                    font = ImageFont.load_default()
-                    font_size = min((x2-x1) // 10, (y2-y1) // 4)  # Базовый размер шрифта
-                    # Увеличиваем размер шрифта на 50%, затем еще в 2 раза, затем еще на 20% (итого в 3.6 раза)
-                    font_size = int(font_size * 1.5 * 2 * 1.2)
+                    continue
+            
+            # Если ни один шрифт не найден, используем дефолтный
+            if font is None:
+                font = ImageFont.load_default()
+                print("⚠️ Используется дефолтный шрифт (может быть некрасивым)")
+                # Уменьшаем размер для дефолтного шрифта
+                font_size = min((x2-x1) // 12, (y2-y1) // 5)
             
             # Определяем размеры текста
             bbox = draw.textbbox((0, 0), "МИЭЛЬ", font=font)
