@@ -304,16 +304,65 @@ class MetroBatchParser:
                 print(f"   • Последнее метро ID: {progress['current_metro_id']}")
                 session_id = progress['id']
                 
-                # Используем processed_metros для определения следующего индекса
-                # processed_metros = количество уже обработанных метро
-                # current_index = индекс следующего метро для обработки
-                current_index = progress['processed_metros']
+                # ЛОГИКА ПРОДОЛЖЕНИЯ: берем следующее метро по порядку ID с проверкой avito_id и is_msk
+                expected_metro_id = progress['current_metro_id']
+                
+                # Ищем следующее метро после expected_metro_id с проверкой avito_id и is_msk
+                next_metro_id = None
+                skipped_metros = []
+                skipped_reasons = []
+                
+                for metro in metro_list:
+                    if metro['id'] > expected_metro_id:
+                        # Проверяем оба условия: avito_id IS NOT NULL и is_msk IS NOT FALSE
+                        if metro['avito_id'] and metro.get('is_msk') is not False:
+                            next_metro_id = metro['id']
+                            break
+                        else:
+                            skipped_metros.append(metro['id'])
+                            # Записываем причину пропуска
+                            if not metro['avito_id']:
+                                skipped_reasons.append(f"ID {metro['id']}: нет avito_id")
+                            if metro.get('is_msk') is False:
+                                skipped_reasons.append(f"ID {metro['id']}: не московское")
+                
+                if next_metro_id:
+                    # Нашли следующее метро с avito_id и is_msk, продолжаем с него
+                    for idx, metro in enumerate(metro_list):
+                        if metro['id'] == next_metro_id:
+                            current_index = idx
+                            break
+                    print(f"✅ Продолжаем с следующего метро: ID {next_metro_id} (после {expected_metro_id})")
+                    print(f"   • Проверка avito_id: ✅ {next_metro_id} имеет avito_id")
+                    print(f"   • Проверка is_msk: ✅ {next_metro_id} московское метро")
+                    
+                    # Показываем пропущенные метро и причины
+                    if skipped_metros:
+                        print(f"   • Пропущены метро: {skipped_metros}")
+                        print(f"   • Причины пропуска:")
+                        for reason in skipped_reasons:
+                            print(f"     - {reason}")
+                else:
+                    # Следующего метро с avito_id и is_msk нет, значит все обработано
+                    print(f"✅ Все метро после ID {expected_metro_id} с avito_id и is_msk уже обработаны")
+                    
+                    # Показываем все пропущенные метро и причины
+                    if skipped_metros:
+                        print(f"   • Пропущены метро: {skipped_metros}")
+                        print(f"   • Причины пропуска:")
+                        for reason in skipped_reasons:
+                            print(f"     - {reason}")
+                    
+                    await complete_parsing_session(session_id)
+                    print(f"✅ Сессия {session_id} завершена - все метро уже обработаны")
+                    self.print_final_stats()
+                    return True
                 
                 if current_index < len(metro_list):
                     next_metro = metro_list[current_index]
                     print(f"🔄 Продолжаем с метро {current_index + 1}/{len(metro_list)}: {next_metro['name']} (ID: {next_metro['id']})")
                 else:
-                    print(f"⚠️ Все метро уже обработаны (processed_metros={progress['processed_metros']}, total={len(metro_list)})")
+                    print(f"⚠️ Все метро уже обработаны")
                     # Завершаем сессию, так как все метро уже обработаны
                     await complete_parsing_session(session_id)
                     print(f"✅ Сессия {session_id} завершена - все метро уже обработаны")
@@ -330,10 +379,22 @@ class MetroBatchParser:
         print(f"📊 Максимум карточек: {max_cards if max_cards and max_cards > 0 else 'все'}")
         if use_progress_tracking:
             print(f"🔄 Отслеживание прогресса: {'включено' if session_id else 'выключено'}")
+            
+            # Диагностика продолжения сессии
+            if session_id and progress:
+                print(f"🔍 ПРОДОЛЖЕНИЕ СЕССИИ:")
+                print(f"   • Последнее обработанное метро ID: {progress['current_metro_id']}")
+                print(f"   • Обработано метро: {progress['processed_metros']}")
+                print(f"   • Всего метро в сессии: {progress['total_metros']}")
+                print(f"   • Текущий список метро: {len(metro_list)}")
+        
         print("=" * 60)
         
         # Обрабатываем метро начиная с текущего индекса
         print(f"🔄 Начинаем обработку с индекса {current_index} (метро {current_index + 1}/{len(metro_list)})")
+        
+        # Логика продолжения сессии теперь корректна
+        # Мы берем следующее метро по ID с проверкой avito_id IS NOT NULL и is_msk IS NOT FALSE
         
         for i in range(current_index, len(metro_list)):
             metro_info = metro_list[i]
