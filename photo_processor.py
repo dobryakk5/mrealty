@@ -47,6 +47,8 @@ class PhotoProcessor:
             image = Image.open(io.BytesIO(image_data))
             format_type = image.format.lower()
             
+
+            
             return {
                 'base64': base64_data,
                 'format': format_type,
@@ -172,44 +174,55 @@ class PhotoProcessor:
             left_shift = int(single_letter_width * 2)
             # Поднимаем на высоту одной буквы М
             up_shift = int(single_letter_height)
-            # Опускаем на 3% ниже на экране
-            down_shift = int(height * 0.03)
+            # Опускаем на 6% ниже на экране (было 3%, увеличили на 3%)
+            down_shift = int(height * 0.06)
             
             # Позиционируем текст с учетом сдвигов (относительно полного изображения)
             # Центрируем в области водяного знака, а не в центре всего изображения
             text_x = x1 + (x2 - x1 - text_width) // 2 - left_shift
             text_y = y1 + (y2 - y1 - text_height) // 2 - up_shift + down_shift
             
-            # Создаем белый цвет с 20% непрозрачности (80% прозрачности) - еще на 10% прозрачнее
-            # RGBA: (255, 255, 255, 51) где 51 = 255 * 0.2 = 20% непрозрачности
-            transparent_white = (255, 255, 255, 51)
+            # Создаем настоящую прозрачность через RGBA слои
+            # Создаем прозрачный слой для текста
+            text_layer = Image.new('RGBA', pil_image.size, (0, 0, 0, 0))
+            text_draw = ImageDraw.Draw(text_layer)
+            
+            # Белый цвет с альфа-каналом для настоящей прозрачности
+            transparent_white = (255, 255, 255, 179)  # 179/255 = 70% непрозрачности
             
             # Рисуем текст с прозрачностью и увеличенной толщиной линий на 15%
             # Для создания толщины рисуем текст несколько раз со смещением
             stroke_width = max(1, int(font_size * 0.02))  # Базовая толщина обводки
             stroke_width = int(stroke_width * 1.15)  # Увеличиваем на 15%
             
-            # Рисуем основной текст с толщиной
+            # Рисуем текст на прозрачном слое
             for dx in range(-stroke_width, stroke_width + 1):
                 for dy in range(-stroke_width, stroke_width + 1):
                     if dx == 0 and dy == 0:
                         continue  # Основной текст рисуем отдельно
                     # Рисуем обводку с той же прозрачностью
-                    draw.text((text_x + dx, text_y + dy), "МИЭЛЬ", font=font, fill=transparent_white)
+                    text_draw.text((text_x + dx, text_y + dy), "МИЭЛЬ", font=font, fill=transparent_white)
             
             # Рисуем основной текст поверх
-            draw.text((text_x, text_y), "МИЭЛЬ", font=font, fill=transparent_white)
+            text_draw.text((text_x, text_y), "МИЭЛЬ", font=font, fill=transparent_white)
+            
+            # Объединяем слои с прозрачностью
+            pil_image = pil_image.convert('RGBA')
+            pil_image = Image.alpha_composite(pil_image, text_layer)
+            
+            # Конвертируем обратно в RGB для сохранения в JPG
+            pil_image = pil_image.convert('RGB')
             
             # Конвертируем обратно в base64
             img_buffer = io.BytesIO()
-            pil_image.save(img_buffer, format='JPEG', quality=95)
+            pil_image.save(img_buffer, format='JPEG', quality=95)  # JPG для экономии места
             img_buffer.seek(0)
             
             base64_data = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
             
             return {
                 'base64': base64_data,
-                'format': 'jpeg',
+                'format': 'jpeg',  # Возвращаем к JPG
                 'size': pil_image.size
             }
             

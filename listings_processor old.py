@@ -161,9 +161,6 @@ class ListingsProcessor:
                 }
                 .photo-item img:hover { 
                     border-color: #0066cc;
-                    cursor: pointer;
-                    transform: scale(1.02);
-                    transition: transform 0.2s ease;
                 }
                 .no-photos { color: #666; font-style: italic; }
                 
@@ -236,11 +233,9 @@ class ListingsProcessor:
                     for j, photo_url in enumerate(photo_urls):
                         html_parts.append(f"""
                         <div class="photo-item">
-                            <a href="{photo_url}" target="_blank" title="Открыть фото {j+1} в полном размере">
-                                <img src="{photo_url}" alt="Фото {j+1}" 
-                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
-                                     loading="lazy">
-                            </a>
+                            <img src="{photo_url}" alt="Фото {j+1}" 
+                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+                                 loading="lazy">
                             <div class="photo-fallback" style="display: none; background: #f0f0f0; border: 1px dashed #ccc; border-radius: 5px; padding: 20px; text-align: center; color: #666;">
                                 <div>📷 Фото {j+1}</div>
                                 <div style="font-size: 12px; margin-top: 5px;">
@@ -270,8 +265,8 @@ class ListingsProcessor:
         
         return ''.join(html_parts)
     
-    async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False, max_photos_per_listing: int = None) -> tuple[str, list[dict]]:
-        """Генерирует HTML галерею с встроенными Base64 изображениями и возвращает статистику по фото"""
+    async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False) -> str:
+        """Генерирует HTML галерею с встроенными Base64 изображениями"""
         html_content = f"""
         <!DOCTYPE html>
         <html lang="ru">
@@ -337,48 +332,8 @@ class ListingsProcessor:
                     transition: border-color 0.2s;
                     background: #f8f9fa;
                 }}
-                                .photo-item img:hover {{
+                .photo-item img:hover {{ 
                     border-color: #0066cc;
-                    cursor: pointer;
-                    transform: scale(1.02);
-                    transition: transform 0.2s ease;
-                }}
-                
-                /* Модальное окно для фото */
-                .modal {{
-                    display: none;
-                    position: fixed;
-                    z-index: 1000;
-                    left: 0;
-                    top: 0;
-                    width: 100%;
-                    height: 100%;
-                    background-color: rgba(0,0,0,0.9);
-                    cursor: pointer;
-                }}
-                
-                .modal-content {{
-                    margin: auto;
-                    display: block;
-                    width: 90%;
-                    max-width: 800px;
-                    max-height: 90%;
-                    object-fit: contain;
-                    margin-top: 5%;
-                }}
-                
-                .close {{
-                    position: absolute;
-                    top: 15px;
-                    right: 35px;
-                    color: #f1f1f1;
-                    font-size: 40px;
-                    font-weight: bold;
-                    cursor: pointer;
-                }}
-                
-                .close:hover {{
-                    color: #bbb;
                 }}
                 .photo-fallback {{ 
                     width: 100%; 
@@ -421,17 +376,6 @@ class ListingsProcessor:
                     }}
                     .main-title {{ font-size: 24px; }}
                     .subtitle {{ font-size: 16px; }}
-                    
-                    /* Мобильная адаптация для модального окна */
-                    .modal-content {{
-                        width: 95%;
-                        margin-top: 10%;
-                    }}
-                    .close {{
-                        top: 10px;
-                        right: 20px;
-                        font-size: 30px;
-                    }}
                 }}
             </style>
         </head>
@@ -445,20 +389,12 @@ class ListingsProcessor:
         html_content += """
         """
         
-        # Собираем статистику по фото для каждого объявления
-        photo_stats = []
-        
         for i, listing_url in enumerate(listing_urls, 1):
             try:
                 # Получаем фото для этого объявления
                 photo_urls = await self.extract_photo_urls_from_url(listing_url)
                 
                 if photo_urls:
-                    # Ограничиваем количество фото если указано
-                    if max_photos_per_listing and len(photo_urls) > max_photos_per_listing:
-                        photo_urls = photo_urls[:max_photos_per_listing]
-                        print(f"🔢 Ограничено до {max_photos_per_listing} фото для объявления {i}")
-                    
                     # Обрабатываем фото с поддержкой водяных знаков
                     if remove_watermarks:
                         processed_photos = self.photo_processor.process_photos_for_embedded_html(photo_urls, remove_watermarks=True)
@@ -487,31 +423,15 @@ class ListingsProcessor:
                             <div class="photo-item">
                                 <img src="data:image/{photo_data['format']};base64,{photo_data['base64']}" 
                                      alt="Фото {j}" 
-                                     loading="lazy"
-                                     onclick="openPhotoModal('data:image/{photo_data['format']};base64,{photo_data['base64']}')"
-                                     title="Кликните для увеличения">
+                                     loading="lazy">
                             </div>
                             """
-                    
-                    # Сохраняем статистику по фото
-                    photo_stats.append({
-                        'listing_number': i,
-                        'photo_count': len(processed_photos),
-                        'url': listing_url
-                    })
                     
                     html_content += f"""
                         </div>
                     </div>
                     """
                 else:
-                    # Сохраняем статистику для объявления без фото
-                    photo_stats.append({
-                        'listing_number': i,
-                        'photo_count': 0,
-                        'url': listing_url
-                    })
-                    
                     html_content += f"""
                     <div class="listing">
                         <h3>Вариант #{i}</h3>
@@ -520,14 +440,6 @@ class ListingsProcessor:
                     """
                     
             except Exception as e:
-                # Сохраняем статистику для объявления с ошибкой
-                photo_stats.append({
-                    'listing_number': i,
-                    'photo_count': 0,
-                    'url': listing_url,
-                    'error': str(e)
-                })
-                
                 html_content += f"""
                 <div class="listing">
                     <h3>Вариант #{i}</h3>
@@ -536,48 +448,11 @@ class ListingsProcessor:
                 """
         
         html_content += """
-            <!-- Модальное окно для фото -->
-            <div id="photoModal" class="modal">
-                <span class="close">&times;</span>
-                <img class="modal-content" id="modalImage">
-            </div>
-            
-            <script>
-                // Получаем элементы модального окна
-                var modal = document.getElementById("photoModal");
-                var modalImg = document.getElementById("modalImage");
-                var closeBtn = document.getElementsByClassName("close")[0];
-                
-                // Функция для открытия фото в модальном окне
-                function openPhotoModal(photoSrc) {{
-                    modal.style.display = "block";
-                    modalImg.src = photoSrc;
-                }}
-                
-                // Закрытие по клику на крестик
-                closeBtn.onclick = function() {{
-                    modal.style.display = "none";
-                }}
-                
-                // Закрытие по клику вне фото
-                modal.onclick = function(e) {{
-                    if (e.target === modal) {{
-                        modal.style.display = "none";
-                    }}
-                }}
-                
-                // Закрытие по клавише Escape
-                document.addEventListener('keydown', function(e) {{
-                    if (e.key === 'Escape') {{
-                        modal.style.display = "none";
-                    }}
-                }});
-            </script>
         </body>
         </html>
         """
         
-        return html_content, photo_stats
+        return html_content
 
 def extract_number(text: str):
     if not text or text == '—':
