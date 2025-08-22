@@ -1,6 +1,6 @@
 # text_handlers.py
 from aiogram.types import Message, BufferedInputFile
-from listings_processor import export_listings_to_excel, generate_html_gallery, generate_html_gallery_embedded, extract_urls
+from listings_processor import listings_processor, export_listings_to_excel, extract_urls
 import io
 
 async def handle_text_message(message: Message):
@@ -16,7 +16,7 @@ async def handle_text_message(message: Message):
                              "🔗 Для обычных ссылок: 'подбор-' + ссылки.")
         return
 
-    await message.answer(f"🔍 Найдено {url_count} ссылок. Обрабатываю...")
+    await message.answer(f"🔍 Найдено ссылок: {url_count}")
 
     try:
         if is_selection_request:
@@ -38,13 +38,11 @@ async def handle_text_message(message: Message):
                     subtitle = subtitle.replace("подбор", "").replace("подбор-", "").strip()
 
             if use_embedded:
-                await message.answer("🔗 Генерирую подбор с встроенными фотографиями...")
-                html_content = generate_html_gallery_embedded(urls, message.from_user.id, subtitle)
+                html_content = await listings_processor.generate_html_gallery_embedded(urls, message.from_user.id, subtitle, remove_watermarks=True)
                 filename = f"подбор_встроенные_фото_{message.from_user.id}.html"
-                caption = f"🏠 Подбор недвижимости\n📊 Количество объявлений: {url_count}\n📁 Формат: HTML с встроенными изображениями"
+                caption = f"🏠 Подбор недвижимости\n📊 Количество объявлений: {url_count}"
             else:
-                await message.answer("🖼️ Генерирую подбор с обычными ссылками на фото...")
-                html_content = generate_html_gallery(urls, message.from_user.id, subtitle)
+                html_content = listings_processor.generate_html_gallery(urls, message.from_user.id, subtitle)
                 filename = f"подбор_обычные_ссылки_{message.from_user.id}.html"
                 caption = f"🏠 Подбор недвижимости (обычные ссылки)\n📊 Количество объявлений: {url_count}\n📁 Формат: HTML (откройте в браузере для просмотра)"
 
@@ -54,7 +52,6 @@ async def handle_text_message(message: Message):
             await message.answer_document(input_file, caption=caption)
 
         else:
-            await message.answer("📊 Генерирую Excel-отчет...")
             excel_file, request_id = await export_listings_to_excel(urls, message.from_user.id)
             input_file = BufferedInputFile(excel_file.getvalue(), filename=f"отчет_недвижимости_{message.from_user.id}.xlsx")
             await message.answer_document(input_file, caption=f"📊 Отчет по недвижимости\n"
