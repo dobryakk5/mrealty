@@ -120,7 +120,7 @@ class ListingsProcessor:
                 'metro': 'N/A'
             }
     
-    def generate_html_gallery(self, listing_urls: list[str], user_id: int, subtitle: str = None) -> str:
+    def generate_html_gallery(self, listing_urls: list[str], user_id: int, subtitle: str = None, listing_comments: list[str] = None) -> str:
         """Генерирует HTML галерею с внешними ссылками на фотографии"""
         html_parts = []
         
@@ -207,6 +207,12 @@ class ListingsProcessor:
                     <h3>Вариант #{i}</h3>
                 """)
                 
+                # Добавляем комментарий к объявлению, если есть
+                if listing_comments and i <= len(listing_comments) and listing_comments[i-1]:
+                    html_parts.append(f'<p class="listing-comment">{listing_comments[i-1]}</p>')
+                
+                html_parts.append("")
+                
                 # Добавляем основную информацию
                 if 'Комнат' in listing_data and listing_data['Комнат']:
                     html_parts.append(f"<p><strong>Комнат:</strong> {listing_data['Комнат']}</p>")
@@ -270,7 +276,7 @@ class ListingsProcessor:
         
         return ''.join(html_parts)
     
-    async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False, max_photos_per_listing: int = None) -> tuple[str, list[dict]]:
+    async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False, max_photos_per_listing: int = None, listing_comments: list[str] = None) -> tuple[str, list[dict]]:
         """Генерирует HTML галерею с встроенными Base64 изображениями и возвращает статистику по фото"""
         html_content = f"""
         <!DOCTYPE html>
@@ -303,6 +309,19 @@ class ListingsProcessor:
                 }}
                 .listing strong {{ 
                     color: #333; 
+                }}
+                
+                /* Стили для комментариев к объявлениям */
+                .listing-comment {{
+                    background: #f8f9fa;
+                    padding: 12px;
+                    margin: 10px 0;
+                    border-left: 4px solid #0066cc;
+                    border-radius: 5px;
+                    font-style: italic;
+                    color: #555;
+                    font-size: 14px;
+                    line-height: 1.4;
                 }}
                 .main-title {{ 
                     color: #333; 
@@ -420,6 +439,29 @@ class ListingsProcessor:
                     border-radius: 20px;
                     font-size: 14px;
                 }}
+                
+                /* Подсказка для смахивания */
+                .swipe-hint {{
+                    position: absolute;
+                    top: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    color: white;
+                    background: rgba(0,0,0,0.7);
+                    padding: 8px 15px;
+                    border-radius: 20px;
+                    font-size: 12px;
+                    text-align: center;
+                    opacity: 0.8;
+                    transition: opacity 0.3s;
+                }}
+                
+                /* Скрываем подсказку на десктопе */
+                @media (min-width: 769px) {{
+                    .swipe-hint {{
+                        display: none;
+                    }}
+                }}
                 .photo-fallback {{ 
                     width: 100%; 
                     height: 140px; 
@@ -489,6 +531,28 @@ class ListingsProcessor:
                         font-size: 12px;
                         padding: 6px 12px;
                     }}
+                    
+                    /* Улучшения для touch-устройств */
+                    .modal {{
+                        touch-action: pan-y pinch-zoom;
+                    }}
+                    
+                    .modal-content {{
+                        touch-action: pan-x pan-y pinch-zoom;
+                        user-select: none;
+                        -webkit-user-select: none;
+                        -moz-user-select: none;
+                        -ms-user-select: none;
+                    }}
+                    
+                    /* Анимация для смахивания */
+                    .modal-content {{
+                        transition: transform 0.2s ease;
+                    }}
+                    
+                    .modal-content.swiping {{
+                        transition: none;
+                    }}
                 }}
             </style>
         </head>
@@ -504,6 +568,9 @@ class ListingsProcessor:
         
         # Собираем статистику по фото для каждого объявления
         photo_stats = []
+        
+        # Глобальный набор для отслеживания уже использованных фото (между объявлениями)
+        global_seen_photos = set()
         
         for i, listing_url in enumerate(listing_urls, 1):
             try:
@@ -522,12 +589,33 @@ class ListingsProcessor:
                     else:
                         processed_photos = self.photo_processor.process_photos_for_embedded_html(photo_urls, remove_watermarks=False)
                     
+                    # Дополнительная проверка на дублирование между объявлениями
+                    unique_processed_photos = []
+                    for photo in processed_photos:
+                        if photo and 'base64' in photo:
+                            photo_key = f"{photo['base64'][:50]}..."  # Первые 50 символов base64 как ключ
+                            if photo_key not in global_seen_photos:
+                                global_seen_photos.add(photo_key)
+                                unique_processed_photos.append(photo)
+                            else:
+                                print(f"⚠️  Пропускаем дубликат фото между объявлениями в объявлении {i}")
+                    
+                    # Используем уникальные фото
+                    processed_photos = unique_processed_photos
+                    
                     # Извлекаем информацию об объявлении
                     listing_info = self.extract_listing_info(listing_url)
                     
                     html_content += f"""
                     <div class="listing">
                         <h3>Вариант #{i}</h3>
+                    """
+                    
+                    # Добавляем комментарий к объявлению, если есть
+                    if listing_comments and i <= len(listing_comments) and listing_comments[i-1]:
+                        html_content += f'<p class="listing-comment">{listing_comments[i-1]}</p>'
+                    
+                    html_content += f"""
                         <p><strong>Комнат:</strong> {listing_info.get('rooms', 'N/A')}</p>
                         <p><strong>Цена:</strong> {listing_info.get('price', 'N/A')}</p>
                         <p><strong>Этаж:</strong> {listing_info.get('floor', 'N/A')}</p>
@@ -600,6 +688,7 @@ class ListingsProcessor:
                 <button class="nav-btn prev-btn" id="prevBtn">‹</button>
                 <button class="nav-btn next-btn" id="nextBtn">›</button>
                 <div class="photo-counter" id="photoCounter"></div>
+                <div class="swipe-hint" id="swipeHint">👆 Смахивайте влево/вправо для навигации</div>
             </div>
             
             <script>
@@ -705,6 +794,73 @@ class ListingsProcessor:
                         showNextPhoto();
                     }}
                 }});
+                
+                // Поддержка смахивания на мобильных устройствах
+                var touchStartX = 0;
+                var touchStartY = 0;
+                var touchEndX = 0;
+                var touchEndY = 0;
+                
+                // Обработка начала касания
+                modal.addEventListener('touchstart', function(e) {{
+                    touchStartX = e.changedTouches[0].screenX;
+                    touchStartY = e.changedTouches[0].screenY;
+                    
+                    // Добавляем класс для анимации
+                    modalImg.classList.add('swiping');
+                    
+                    // Скрываем подсказку после первого касания
+                    var swipeHint = document.getElementById('swipeHint');
+                    if (swipeHint) {{
+                        swipeHint.style.opacity = '0';
+                        setTimeout(function() {{
+                            swipeHint.style.display = 'none';
+                        }}, 300);
+                    }}
+                }}, false);
+                
+                // Обработка окончания касания
+                modal.addEventListener('touchend', function(e) {{
+                    touchEndX = e.changedTouches[0].screenX;
+                    touchEndY = e.changedTouches[0].screenY;
+                    handleSwipe();
+                }}, false);
+                
+                // Функция обработки смахивания
+                function handleSwipe() {{
+                    var diffX = touchStartX - touchEndX;
+                    var diffY = touchStartY - touchEndY;
+                    
+                    // Минимальное расстояние для смахивания (в пикселях)
+                    var minSwipeDistance = 50;
+                    
+                    // Проверяем, что смахивание достаточно длинное
+                    if (Math.abs(diffX) > minSwipeDistance || Math.abs(diffY) > minSwipeDistance) {{
+                        // Определяем направление смахивания
+                        if (Math.abs(diffX) > Math.abs(diffY)) {{
+                            // Горизонтальное смахивание
+                            if (diffX > 0) {{
+                                // Смахивание влево - следующее фото
+                                showNextPhoto();
+                            }} else {{
+                                // Смахивание вправо - предыдущее фото
+                                showPrevPhoto();
+                            }}
+                        }} else {{
+                            // Вертикальное смахивание
+                            if (diffY > 0) {{
+                                // Смахивание вверх - можно использовать для закрытия
+                                // modal.style.display = "none";
+                            }} else {{
+                                // Смахивание вниз - можно использовать для закрытия
+                                // modal.style.display = "none";
+                            }}
+                        }}
+                    }}
+                    
+                    // Убираем класс анимации
+                    modalImg.classList.remove('swiping');
+                }}
             </script>
         </body>
         </html>

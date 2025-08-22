@@ -63,9 +63,17 @@ class PhotoProcessor:
         Обрабатывает фотографии для встроенного HTML
         """
         processed_photos = []
+        seen_urls = set()  # Для отслеживания уже обработанных URL
         
         for i, url in enumerate(photo_urls):
             try:
+                # Проверяем, не обрабатывали ли мы уже этот URL
+                if url in seen_urls:
+                    print(f"⚠️  Пропускаем дубликат URL: {url}")
+                    continue
+                
+                seen_urls.add(url)
+                
                 if remove_watermarks:
                     # Применяем метод 6: МИЭЛЬ поверх водяного знака
                     result = self.method6_miel_overlay(url)
@@ -93,7 +101,21 @@ class PhotoProcessor:
                 print(f"❌ Ошибка при обработке фото {i+1}: {e}")
                 continue
         
-        return processed_photos
+        # Дополнительная проверка на дубликаты в base64
+        unique_processed_photos = []
+        seen_base64 = set()
+        
+        for photo in processed_photos:
+            if photo and 'base64' in photo:
+                base64_data = photo['base64']
+                if base64_data not in seen_base64:
+                    seen_base64.add(base64_data)
+                    unique_processed_photos.append(photo)
+                else:
+                    print(f"⚠️  Пропускаем дубликат base64 для URL: {photo.get('url', 'unknown')}")
+        
+        print(f"📊 Обработано уникальных фото: {len(unique_processed_photos)} из {len(processed_photos)}")
+        return unique_processed_photos
 
     def method6_miel_overlay(self, photo_url: str) -> Optional[Dict[str, Any]]:
         """

@@ -7,6 +7,71 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
+def extract_listing_comments(text: str, urls: list[str]) -> list[str]:
+    """
+    Извлекает комментарии между ссылками для каждого объявления
+    Логика:
+    - Текст до первой ссылки - это subtitle (общий комментарий)
+    - Текст от первой до второй ссылки - комментарий к первому объявлению
+    - Текст от второй до третьей ссылки - комментарий ко второму объявлению
+    - И так далее
+    """
+    import re
+    comments = []
+    
+    if not urls:
+        return comments
+    
+    # Находим позиции всех ссылок в тексте
+    url_positions = []
+    for url in urls:
+        pos = text.find(url)
+        if pos != -1:
+            url_positions.append((pos, url))
+    
+    # Сортируем по позиции
+    url_positions.sort(key=lambda x: x[0])
+    
+    # Извлекаем комментарии между ссылками
+    for i in range(len(url_positions)):
+        current_pos, current_url = url_positions[i]
+        
+        if i == 0:
+            # Для первого объявления - комментарий отсутствует (до первой ссылки это subtitle)
+            comment = ""
+        else:
+            # Для остальных объявлений - текст между предыдущей и текущей ссылкой
+            prev_pos, prev_url = url_positions[i-1]
+            comment = text[prev_pos + len(prev_url):current_pos].strip()
+            
+            # Очищаем комментарий от лишних символов
+            comment = comment.replace("подбор", "").replace("подбор-", "").strip()
+            # Убираем цифры в начале комментария (ограничения фото)
+            comment = re.sub(r'^\d+\s*', '', comment).strip()
+        
+        # Добавляем комментарий (может быть пустым)
+        comments.append(comment)
+    
+    # Добавляем комментарий для последнего объявления (текст после последней ссылки)
+    if url_positions:
+        last_pos, last_url = url_positions[-1]
+        last_comment = text[last_pos + len(last_url):].strip()
+        
+        # Очищаем комментарий от лишних символов
+        last_comment = last_comment.replace("подбор", "").replace("подбор-", "").strip()
+        # Убираем цифры в начале комментария (ограничения фото)
+        last_comment = re.sub(r'^\d+\s*', '', last_comment).strip()
+        
+        # Если есть текст после последней ссылки, добавляем его как комментарий к следующему объявлению
+        if len(comments) < len(urls):
+            comments.append(last_comment)
+    
+    # Дополняем пустыми комментариями до нужного количества
+    while len(comments) < len(urls):
+        comments.append("")
+    
+    return comments
+
 async def handle_text_message(message: Message):
     text = message.text.strip()
     is_selection_request = "подбор" in text.lower()
@@ -40,6 +105,7 @@ async def handle_text_message(message: Message):
         if is_selection_request:
             subtitle = None
             max_photos_per_listing = None  # Максимальное количество фото на объявление
+            listing_comments = []  # Комментарии к объявлениям
             
             if "подбор" in text.lower():
                 podbor_pos = text.lower().find("подбор")
@@ -65,9 +131,13 @@ async def handle_text_message(message: Message):
                     subtitle = text_after_podbor
                 if subtitle:
                     subtitle = subtitle.replace("подбор", "").replace("подбор-", "").strip()
+                
+                # Извлекаем комментарии между ссылками
+                listing_comments = extract_listing_comments(text, urls)
+                print(f"📝 Найдено комментариев к объявлениям: {len(listing_comments)}")
 
             if use_embedded:
-                html_content, photo_stats = await listings_processor.generate_html_gallery_embedded(urls, message.from_user.id, subtitle, remove_watermarks=True, max_photos_per_listing=max_photos_per_listing)
+                html_content, photo_stats = await listings_processor.generate_html_gallery_embedded(urls, message.from_user.id, subtitle, remove_watermarks=True, max_photos_per_listing=max_photos_per_listing, listing_comments=listing_comments)
                 filename = f"Подбор_{metro_info}.html"
                 caption = f"🏠 Подбор недвижимости"
                 
@@ -84,7 +154,7 @@ async def handle_text_message(message: Message):
                         else:
                             await message.answer(f"⚠️ Фото не найдены в объявлении {stat['listing_number']}")
             else:
-                html_content = listings_processor.generate_html_gallery(urls, message.from_user.id, subtitle)
+                html_content = listings_processor.generate_html_gallery(urls, message.from_user.id, subtitle, listing_comments)
                 filename = f"Подбор_{metro_info}.html"
                 caption = f"🏠 Подбор недвижимости (обычные ссылки)"
 
