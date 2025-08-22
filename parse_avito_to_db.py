@@ -304,59 +304,101 @@ class MetroBatchParser:
                 print(f"   • Последнее метро ID: {progress['current_metro_id']}")
                 session_id = progress['id']
                 
-                # ЛОГИКА ПРОДОЛЖЕНИЯ: берем следующее метро по порядку ID с проверкой avito_id и is_msk
+                # ЛОГИКА ПРОДОЛЖЕНИЯ: проверяем, завершено ли текущее метро
                 expected_metro_id = progress['current_metro_id']
                 
-                # Ищем следующее метро после expected_metro_id с проверкой avito_id и is_msk
-                next_metro_id = None
-                skipped_metros = []
-                skipped_reasons = []
+                # Сначала проверяем, можно ли продолжить с текущего метро ID 36
+                current_metro_can_continue = False
+                current_metro_index = None
                 
-                for metro in metro_list:
-                    if metro['id'] > expected_metro_id:
-                        # Проверяем оба условия: avito_id IS NOT NULL и is_msk IS NOT FALSE
+                # Ищем текущее метро в списке
+                for idx, metro in enumerate(metro_list):
+                    if metro['id'] == expected_metro_id:
+                        current_metro_index = idx
+                        # Проверяем, можно ли продолжить с этого метро
                         if metro['avito_id'] and metro.get('is_msk') is not False:
-                            next_metro_id = metro['id']
-                            break
-                        else:
-                            skipped_metros.append(metro['id'])
-                            # Записываем причину пропуска
-                            if not metro['avito_id']:
-                                skipped_reasons.append(f"ID {metro['id']}: нет avito_id")
-                            if metro.get('is_msk') is False:
-                                skipped_reasons.append(f"ID {metro['id']}: не московское")
+                            current_metro_can_continue = True
+                        break
                 
-                if next_metro_id:
-                    # Нашли следующее метро с avito_id и is_msk, продолжаем с него
-                    for idx, metro in enumerate(metro_list):
-                        if metro['id'] == next_metro_id:
-                            current_index = idx
-                            break
-                    print(f"✅ Продолжаем с следующего метро: ID {next_metro_id} (после {expected_metro_id})")
-                    print(f"   • Проверка avito_id: ✅ {next_metro_id} имеет avito_id")
-                    print(f"   • Проверка is_msk: ✅ {next_metro_id} московское метро")
+                if current_metro_can_continue:
+                    # Продолжаем с текущего метро ID 36
+                    current_index = current_metro_index
+                    print(f"✅ Продолжаем с текущего метро: ID {expected_metro_id}")
+                    print(f"   • Проверка avito_id: ✅ {expected_metro_id} имеет avito_id")
+                    print(f"   • Проверка is_msk: ✅ {expected_metro_id} московское метро")
                     
-                    # Показываем пропущенные метро и причины
-                    if skipped_metros:
-                        print(f"   • Пропущены метро: {skipped_metros}")
-                        print(f"   • Причины пропуска:")
-                        for reason in skipped_reasons:
-                            print(f"     - {reason}")
+                    # Проверяем прогресс по страницам для этого метро
+                    try:
+                        from parse_todb_avito import get_avito_pagination_status
+                        pagination_status = await get_avito_pagination_status(expected_metro_id)
+                        if pagination_status and pagination_status['last_processed_page'] > 0:
+                            # Есть прогресс по страницам, продолжаем со следующей
+                            start_page = pagination_status['last_processed_page'] + 1
+                            print(f"   • Прогресс по страницам: найдена страница {pagination_status['last_processed_page']}")
+                            print(f"   • Продолжаем с страницы: {start_page}")
+                        else:
+                            # Нет прогресса по страницам, начинаем с 1-й
+                            start_page = 1
+                            print(f"   • Прогресс по страницам: не найден")
+                            print(f"   • Начинаем с страницы: {start_page}")
+                    except Exception as e:
+                        print(f"   • Ошибка проверки прогресса по страницам: {e}")
+                        start_page = 1
+                        print(f"   • Начинаем с страницы: {start_page} (по умолчанию)")
                 else:
-                    # Следующего метро с avito_id и is_msk нет, значит все обработано
-                    print(f"✅ Все метро после ID {expected_metro_id} с avito_id и is_msk уже обработаны")
+                    # Текущее метро нельзя продолжить, ищем следующее
+                    print(f"⚠️ Текущее метро ID {expected_metro_id} нельзя продолжить")
                     
-                    # Показываем все пропущенные метро и причины
-                    if skipped_metros:
-                        print(f"   • Пропущены метро: {skipped_metros}")
-                        print(f"   • Причины пропуска:")
-                        for reason in skipped_reasons:
-                            print(f"     - {reason}")
+                    # Ищем следующее метро после expected_metro_id с проверкой avito_id и is_msk
+                    next_metro_id = None
+                    skipped_metros = []
+                    skipped_reasons = []
                     
-                    await complete_parsing_session(session_id)
-                    print(f"✅ Сессия {session_id} завершена - все метро уже обработаны")
-                    self.print_final_stats()
-                    return True
+                    for metro in metro_list:
+                        if metro['id'] > expected_metro_id:
+                            # Проверяем оба условия: avito_id IS NOT NULL и is_msk IS NOT FALSE
+                            if metro['avito_id'] and metro.get('is_msk') is not False:
+                                next_metro_id = metro['id']
+                                break
+                            else:
+                                skipped_metros.append(metro['id'])
+                                # Записываем причину пропуска
+                                if not metro['avito_id']:
+                                    skipped_reasons.append(f"ID {metro['id']}: нет avito_id")
+                                if metro.get('is_msk') is False:
+                                    skipped_reasons.append(f"ID {metro['id']}: не московское")
+                    
+                    if next_metro_id:
+                        # Нашли следующее метро с avito_id и is_msk, продолжаем с него
+                        for idx, metro in enumerate(metro_list):
+                            if metro['id'] == next_metro_id:
+                                current_index = idx
+                                break
+                        print(f"✅ Переходим к следующему метро: ID {next_metro_id} (после {expected_metro_id})")
+                        print(f"   • Проверка avito_id: ✅ {next_metro_id} имеет avito_id")
+                        print(f"   • Проверка is_msk: ✅ {next_metro_id} московское метро")
+                        
+                        # Показываем пропущенные метро и причины
+                        if skipped_metros:
+                            print(f"   • Пропущены метро: {skipped_metros}")
+                            print(f"   • Причины пропуска:")
+                            for reason in skipped_reasons:
+                                print(f"     - {reason}")
+                    else:
+                        # Следующего метро с avito_id и is_msk нет, значит все обработано
+                        print(f"✅ Все метро после ID {expected_metro_id} с avito_id и is_msk уже обработаны")
+                        
+                        # Показываем все пропущенные метро и причины
+                        if skipped_metros:
+                            print(f"   • Пропущены метро: {skipped_metros}")
+                            print(f"   • Причины пропуска:")
+                            for reason in skipped_reasons:
+                                print(f"     - {reason}")
+                        
+                        await complete_parsing_session(session_id)
+                        print(f"✅ Сессия {session_id} завершена - все метро уже обработаны")
+                        self.print_final_stats()
+                        return True
                 
                 if current_index < len(metro_list):
                     next_metro = metro_list[current_index]
@@ -394,7 +436,10 @@ class MetroBatchParser:
         print(f"🔄 Начинаем обработку с индекса {current_index} (метро {current_index + 1}/{len(metro_list)})")
         
         # Логика продолжения сессии теперь корректна
-        # Мы берем следующее метро по ID с проверкой avito_id IS NOT NULL и is_msk IS NOT FALSE
+        # Сначала пытаемся продолжить с текущего метро, если не получается - переходим к следующему
+        
+        # Определяем начальную страницу для текущего метро
+        current_start_page = start_page if 'start_page' in locals() else 1
         
         for i in range(current_index, len(metro_list)):
             metro_info = metro_list[i]
@@ -404,7 +449,10 @@ class MetroBatchParser:
             # start_page применяется только к первому метро в списке (current_index)
             # Это позволяет возобновить парсинг конкретного метро с определенной страницы
             # Все последующие метро всегда начинают с 1-й страницы
-            current_start_page = start_page if i == current_index else 1
+            if i == current_index and 'start_page' in locals():
+                current_start_page = start_page
+            else:
+                current_start_page = 1
             
             # Парсим метро
             success = await self.parse_single_metro(metro_info, max_pages, max_cards, current_start_page)
