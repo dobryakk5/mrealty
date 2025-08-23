@@ -43,14 +43,11 @@ async def create_ads_avito_table() -> None:
                 area NUMERIC,
                 floor SMALLINT,
                 total_floors SMALLINT,
-                complex TEXT,
-                metro TEXT,
                 metro_id INTEGER, -- ID метро из таблицы metro
                 min_metro SMALLINT,
                 address TEXT,
                 tags TEXT,
                 person_type TEXT,
-                person TEXT,
                 source_created TIMESTAMP, -- Время публикации на источнике
                 object_type_id SMALLINT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -112,10 +109,12 @@ async def convert_seller_type_to_number(seller_type):
     
     if 'собственник' in seller_type_lower:
         return 3
-    elif 'агентство' in seller_type_lower or 'агент' in seller_type_lower:
+    elif 'агентство' in seller_type_lower or 'агент' in seller_type_lower or 'реквизиты проверены' in seller_type_lower:
         return 2
     elif 'застройщик' in seller_type_lower:
         return 4
+    elif 'документы проверены' in seller_type_lower:
+        return 1  # "частное лицо" (private)
     else:
         return 1  # "частное лицо" по умолчанию
 
@@ -174,7 +173,6 @@ async def save_avito_ad(ad_data: dict) -> bool:
 
         seller = ad_data.get('seller', {})
         person_type = None
-        person = None
         
         # ПРИОРИТЕТ: используем поле person_type из ad_data, если оно есть
         if ad_data.get('person_type'):
@@ -182,11 +180,6 @@ async def save_avito_ad(ad_data: dict) -> bool:
             # Конвертируем текстовый тип в число для БД
             person_type = await convert_seller_type_to_number(person_type)
             # print(f"[DB] Используется поле person_type из ad_data: {person_type}")
-        
-        # ПРИОРИТЕТ: используем поле person из ad_data, если оно есть
-        if ad_data.get('person'):
-            person = ad_data['person']
-            # print(f"[DB] Используется поле person из ad_data: {person}")
         else:
             # Fallback на старую логику
             if seller.get('type'):
@@ -200,16 +193,6 @@ async def save_avito_ad(ad_data: dict) -> bool:
                 person_type = type_mapping.get(seller['type'], seller['type'])
                 # Конвертируем текстовый тип в число для БД
                 person_type = await convert_seller_type_to_number(person_type)
-            
-            # Приоритет названию агентства из тегов
-            if seller.get('agency_name'):
-                person = seller['agency_name']
-            elif seller.get('name'):
-                clean_name = seller['name']
-                for stop in ['Документы проверены', 'Посмотреть все объекты', 'Суперагент', '+7', 'Написать']:
-                    if stop in clean_name:
-                        clean_name = clean_name.split(stop)[0].strip()
-                person = clean_name
         
         # Если тип продавца не определен, устанавливаем "частное лицо" (1) по умолчанию
         if person_type is None:
@@ -234,9 +217,9 @@ async def save_avito_ad(ad_data: dict) -> bool:
         query = """
             INSERT INTO ads_avito (
                 url, avitoid, price, rooms, area, floor, total_floors, 
-                complex, metro, metro_id, min_metro, address, tags, 
-                person_type, person, source_created, object_type_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                metro_id, min_metro, address, tags, 
+                person_type, source_created, object_type_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT (avitoid) DO UPDATE SET
                 url = EXCLUDED.url,
                 price = EXCLUDED.price,
@@ -244,14 +227,11 @@ async def save_avito_ad(ad_data: dict) -> bool:
                 area = EXCLUDED.area,
                 floor = EXCLUDED.floor,
                 total_floors = EXCLUDED.total_floors,
-                complex = EXCLUDED.complex,
-                metro = EXCLUDED.metro,
                 metro_id = EXCLUDED.metro_id,
                 min_metro = EXCLUDED.min_metro,
                 address = EXCLUDED.address,
                 tags = EXCLUDED.tags,
                 person_type = EXCLUDED.person_type,
-                person = EXCLUDED.person,
                 source_created = EXCLUDED.source_created,
                 object_type_id = EXCLUDED.object_type_id,
                 updated_at = CURRENT_TIMESTAMP
@@ -266,14 +246,11 @@ async def save_avito_ad(ad_data: dict) -> bool:
             ad_data.get('area_m2'),
             ad_data.get('floor'),
             ad_data.get('floor_total'),
-            ad_data.get('complex'),
-            metro,
             ad_data.get('metro_id'),  # Добавляем metro_id
             min_metro,
             address,
             tags,
             person_type,
-            person,
             source_created,  # Добавляем время публикации
             (2 if ad_data.get('object_type_id') == 2 else 1)  # object_type_id
         )

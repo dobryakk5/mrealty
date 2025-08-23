@@ -813,7 +813,7 @@ class EnhancedMetroParser:
             
         # URL для вторички с правильным avito_id
         base_url = "https://www.avito.ru/moskva/kvartiry/prodam/vtorichka-ASgBAgICAkSSA8YQ5geMUg"
-        metro_url = f"{base_url}?metro={self.metro_avito_id}"
+        metro_url = f"{base_url}?metro={self.metro_avito_id}&footWalkingMetro=20"
         return metro_url
     
     def generate_search_context(self) -> str:
@@ -853,7 +853,7 @@ class EnhancedMetroParser:
             
         # URL для вторички с правильным avito_id и сортировкой
         base_url = "https://www.avito.ru/moskva/kvartiry/prodam/vtorichka-ASgBAgICAkSSA8YQ5geMUg"
-        metro_url = f"{base_url}?metro={self.metro_avito_id}&s=104"
+        metro_url = f"{base_url}?metro={self.metro_avito_id}&s=104&footWalkingMetro=20"
         
         # Добавляем пагинацию (Avito использует параметр p)
         if page > 1:
@@ -3247,7 +3247,7 @@ class EnhancedMetroParser:
             
             # Выводим URL общего поискового запроса
             if self.metro_avito_id:
-                base_url = f"https://www.avito.ru/moskva/kvartiry/prodam?metro={self.metro_avito_id}&s=104"
+                base_url = f"https://www.avito.ru/moskva/kvartiry/prodam?metro={self.metro_avito_id}&s=104&footWalkingMetro=20"
                 print(f"   • URL поиска: {base_url}")
             print()
             
