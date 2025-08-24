@@ -115,6 +115,7 @@ class MetroBatchParser:
                         SELECT id, name, avito_id 
                         FROM metro 
                         WHERE is_msk IS NOT FALSE 
+                        AND avito_id IS NOT NULL
                         ORDER BY id
                     """
                     print(f"🔍 SQL запрос без исключений (пустой список): {query}")
@@ -125,6 +126,7 @@ class MetroBatchParser:
                         SELECT id, name, avito_id 
                         FROM metro 
                         WHERE is_msk IS NOT FALSE 
+                        AND avito_id IS NOT NULL
                         AND id NOT IN ({exclude_placeholders})
                         ORDER BY id
                     """
@@ -136,6 +138,7 @@ class MetroBatchParser:
                     SELECT id, name, avito_id 
                     FROM metro 
                     WHERE is_msk IS NOT FALSE 
+                    AND avito_id IS NOT NULL
                     ORDER BY id
                 """
                 print(f"🔍 SQL запрос без исключений: {query}")
@@ -173,6 +176,8 @@ class MetroBatchParser:
                 SELECT id, name, avito_id 
                 FROM metro 
                 WHERE id IN ({placeholders})
+                AND avito_id IS NOT NULL
+                AND is_msk IS NOT FALSE
                 ORDER BY id
             """
             result = await conn.fetch(query, *metro_ids)
