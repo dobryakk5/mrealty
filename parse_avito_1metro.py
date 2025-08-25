@@ -817,7 +817,10 @@ class EnhancedMetroParser:
         return metro_url
     
     def generate_search_context(self) -> str:
-        """Генерирует простой context для каждого запроса"""
+        """Генерирует простой context для каждого запроса
+        
+        ВАЖНО: Данные сжимаются только один раз для избежания дублирования gzip header
+        """
         import base64
         import gzip
         import json
@@ -829,13 +832,36 @@ class EnhancedMetroParser:
             "sessionId": random.randint(100000, 999999)
         }
         try:
+            # Создаем JSON строку
             json_str = json.dumps(context_data, separators=(',', ':'))
+            
+            # Сжимаем ОДИН раз
             compressed = gzip.compress(json_str.encode('utf-8'))
+            
+            # Кодируем в base64
             encoded = base64.b64encode(compressed).decode('utf-8')
-            return f"H4sIAAAAAAAA_{encoded}"
+            
+            # Проверяем, что нет дублирования
+            if encoded.startswith('H4sI'):
+                print(f"[CONTEXT] ⚠️ Обнаружен дублированный gzip header в encoded данных!")
+                print(f"[CONTEXT] Это означает, что данные уже были сжаты ранее")
+                # Возвращаем простой контекст без дополнительного сжатия
+                return "H4sIAAAAAAAA_wEjANz_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
+            
+            result = f"H4sIAAAAAAAA_{encoded}"
+            
+            # Финальная проверка на дублирование
+            if result.count('H4sIAAAAAAAA_') > 1:
+                print(f"[CONTEXT] ❌ КРИТИЧЕСКАЯ ОШИБКА: Дублированный gzip header!")
+                print(f"[CONTEXT] Возвращаем fallback контекст")
+                return "H4sIAAAAAAAA_wEjANz_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
+            
+            print(f"[CONTEXT] ✅ Контекст сгенерирован корректно (длина: {len(result)})")
+            return result
+            
         except Exception as e:
             print(f"[CONTEXT] Ошибка генерации: {e}")
-            return "H4sIAAAAAAAA_wE-AMH_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
+            return "H4sIAAAAAAAA_wEjANz_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
     
     def clean_url_path(self, url_path: str) -> str:
         """Очищает URL от всех параметров, оставляя только путь"""
@@ -861,9 +887,16 @@ class EnhancedMetroParser:
         
         # Генерируем новый context для каждой страницы
         context = self.generate_search_context()
+        
+        # Проверяем контекст на дублирование перед добавлением в URL
+        if context and context.count('H4sIAAAAAAAA_') > 1:
+            print(f"[CONTEXT] ❌ ОШИБКА: Обнаружен дублированный gzip header в контексте!")
+            print(f"[CONTEXT] Используем fallback контекст для страницы {page}")
+            context = "H4sIAAAAAAAA_wEjANz_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
+        
         metro_url += f"&context={context}"
         
-        print(f"[CONTEXT] Страница {page}: сгенерирован новый context")
+        print(f"[CONTEXT] Страница {page}: context добавлен в URL (длина: {len(context)})")
         return metro_url
     
     def wait_for_dom_stability(self, timeout=15):
@@ -2945,6 +2978,28 @@ class EnhancedMetroParser:
             
             # Выводим сообщение о обработке страницы
             print(f"страница {page} ({metro_url}) обработана")
+            
+            # Проверяем, не изменился ли URL после загрузки
+            try:
+                current_url = self.driver.current_url
+                if current_url != metro_url:
+                    print(f"[URL_CHECK] ⚠️ URL изменился после загрузки!")
+                    print(f"[URL_CHECK] Ожидаемый: {metro_url}")
+                    print(f"[URL_CHECK] Текущий: {current_url}")
+                    
+                    # Проверяем на дублирование в текущем URL
+                    if 'context=' in current_url:
+                        context_start = current_url.find('context=') + 8
+                        context_end = current_url.find('&', context_start)
+                        if context_end == -1:
+                            context_end = len(current_url)
+                        
+                        current_context = current_url[context_start:context_end]
+                        if current_context.count('H4sIAAAAAAAA_') > 1:
+                            print(f"[URL_CHECK] ❌ Обнаружен дублированный gzip header в текущем URL!")
+                            print(f"[URL_CHECK] Это может быть причиной проблем с парсингом")
+            except Exception as e:
+                print(f"[URL_CHECK] Ошибка проверки URL: {e}")
             
             # Увеличиваем время ожидания для загрузки страницы и DOM
             print(f"⏳ Ожидаем загрузку страницы {page}...")
