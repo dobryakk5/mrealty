@@ -1870,129 +1870,33 @@ class EnhancedMetroParser:
                     # Обновляем основную информацию о продавце
                     db_data['seller'] = seller_info_from_tags
             
-            # Информация о продавце (Person) - всё что после времени публикации
+            # Информация о продавце - определяем только person_type
             seller_info = card_data.get('seller_info', {})
             
-            # ПРИОРИТЕТ: используем clean_person из seller_info, если он есть
-            if seller_info and seller_info.get('clean_person'):
-                clean_person = seller_info['clean_person']
-                # Проверяем длину - если больше 70 символов, значит это описание, а не имя
-                if len(clean_person) > 70:
-                    db_data['person'] = None
-                    print(f"⚠️ Person слишком длинный ({len(clean_person)} символов), устанавливаем NULL")
+            # Определяем тип продавца
+            if seller_info and seller_info.get('type'):
+                db_data['person_type'] = seller_info['type']
+            elif 'seller_info' in card_data and card_data['seller_info'].get('type'):
+                db_data['person_type'] = card_data['seller_info']['type']
+            else:
+                db_data['person_type'] = 'не определено'
+            
+            # Если тип продавца не определен, пробуем определить по тегам
+            if db_data['person_type'] == 'не определено':
+                tags = card_data.get('tags', [])
+                tags_text = ' '.join(tags).lower()
+                
+                if 'собственник' in tags_text:
+                    db_data['person_type'] = 'собственник'
+                elif 'реквизиты проверены' in tags_text:
+                    db_data['person_type'] = 'агентство'
+                elif 'документы проверены' in tags_text or 'частное лицо' in tags_text:
+                    db_data['person_type'] = 'частное лицо'
+                elif 'застройщик' in tags_text:
+                    db_data['person_type'] = 'застройщик'
                 else:
-                    db_data['person'] = clean_person
-                
-                # Тип продавца сохраняем в person_type
-                if seller_info.get('type'):
-                    db_data['person_type'] = seller_info['type']
-                
-            # ПРИОРИТЕТ: используем поле person из card_data, если оно есть
-            elif 'person' in card_data and card_data['person']:
-                # Очищаем поле person от лишней информации
-                person_text = card_data['person']
-                
-                # Убираем "Тип: ...", "Объявлений: ...", дату и количество объявлений
-                lines = person_text.split(' | ')
-                filtered_lines = []
-                
-                for line in lines:
-                    line = line.strip()
-                    
-                    # Пропускаем лишние строки
-                    if (line.startswith('Тип:') or 
-                        line.startswith('Объявлений:') or
-                        line.startswith('Полная информация:') or
-                        'завершённых объявлений' in line or
-                        'завершенных объявлений' in line or
-                        re.match(r'\d+\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)', line) or
-                        re.match(r'\d{1,2}\s+[а-яё]+', line)):  # Дата в формате "18 июля"
-                        continue
-                    
-                    # Оставляем только имя/название
-                    if line and len(line) > 2:
-                        filtered_lines.append(line)
-                
-                if filtered_lines:
-                    # Берем только первое имя/название (обычно это основное)
-                    clean_person = filtered_lines[0]
-                    # Проверяем длину - если больше 70 символов, значит это описание, а не имя
-                    if len(clean_person) > 70:
-                        db_data['person'] = None
-                        print(f"⚠️ Person слишком длинный ({len(clean_person)} символов), устанавливаем NULL")
-                    else:
-                        db_data['person'] = clean_person
-                else:
-                    db_data['person'] = 'Информация не найдена'
-                
-                # Тип продавца сохраняем в person_type
-                if 'seller_info' in card_data and card_data['seller_info'].get('type'):
-                    db_data['person_type'] = card_data['seller_info']['type']
-                
-            elif seller_info:
-                # Формируем полную информацию о продавце для поля person (БЕЗ типа и количества объявлений)
-                person_info_parts = []
-                
-                # Имя продавца
-                if 'name' in seller_info:
-                    person_info_parts.append(f"Имя: {seller_info['name']}")
-                
-                # Название агентства
-                if 'agency_name' in seller_info:
-                    person_info_parts.append(f"Агентство: {seller_info['agency_name']}")
-                
-                # Дополнительная информация
-                if seller_info.get('reliable_partner'):
-                    person_info_parts.append("Надёжный партнёр")
-                
-                if seller_info.get('verified_rosreestr'):
-                    person_info_parts.append("Проверено в Росреестре")
-                
-                if seller_info.get('verified_requisites'):
-                    person_info_parts.append("Реквизиты проверены")
-                
-                # Добавляем ВСЮ информацию после времени публикации
-                if 'all_text_after_time' in seller_info and seller_info['all_text_after_time']:
-                    all_text = ' | '.join(seller_info['all_text_after_time'])
-                    
-                    # Также добавляем в person_info_parts для совместимости
-                    person_info_parts.append(f"Полная информация: {all_text}")
-                elif 'raw_lines' in seller_info and seller_info['raw_lines']:
-                    raw_text = ' | '.join(seller_info['raw_lines'])
-                    person_info_parts.append(f"Дополнительно: {raw_text}")
-                
-                # Объединяем всю информацию в поле person
-                if person_info_parts:
-                    person_text = ' | '.join(person_info_parts)
-                    # Проверяем длину - если больше 70 символов, значит это описание, а не имя
-                    if len(person_text) > 70:
-                        db_data['person'] = None
-                        print(f"⚠️ Person слишком длинный ({len(person_text)} символов), устанавливаем NULL")
-                    else:
-                        db_data['person'] = person_text
-                
-                # Сохраняем также отдельные поля для совместимости
-                if 'type' in seller_info:
-                    db_data['person_type'] = seller_info['type']
-                else:
-                    db_data['person_type'] = 'не определено'
-                
-                # Если тип продавца не определен, пробуем определить по тегам
-                if db_data['person_type'] == 'не определено':
-                    tags = card_data.get('tags', [])
-                    tags_text = ' '.join(tags).lower()
-                    
-                    if 'собственник' in tags_text:
-                        db_data['person_type'] = 'собственник'
-                    elif 'реквизиты проверены' in tags_text:
-                        db_data['person_type'] = 'агентство'
-                    elif 'документы проверены' in tags_text or 'частное лицо' in tags_text:
-                        db_data['person_type'] = 'частное лицо'
-                    elif 'застройщик' in tags_text:
-                        db_data['person_type'] = 'застройщик'
-                    else:
-                        # Если тип не определен, устанавливаем "частное лицо" по умолчанию
-                        db_data['person_type'] = 'частное лицо'
+                    # Если тип не определен, устанавливаем "частное лицо" по умолчанию
+                    db_data['person_type'] = 'частное лицо'
             
             # Время публикации
             published_time = card_data.get('published_time', '')
@@ -2471,18 +2375,13 @@ class EnhancedMetroParser:
                         seller_name = line
                         # print(f"👤 Найдено ПОЛНОЕ имя продавца в строке с запятой: {seller_name}")
             
-            # Сохраняем найденную информацию
+            # Сохраняем найденную информацию (только для определения типа продавца)
             if seller_name:
                 person_info['name'] = seller_name
             
-            # Сохраняем все строки с информацией о продавце
+            # Сохраняем информацию для определения типа продавца
             if seller_lines:
                 person_info['all_text_after_time'] = seller_lines
-            
-            # Сохраняем сырые строки для отладки
-            if 'raw_lines' not in person_info:
-                person_info['raw_lines'] = []
-            person_info['raw_lines'].append(line.strip())
             
             # Если тип продавца не определен, устанавливаем "частное лицо" по умолчанию
             if not person_info.get('type') or person_info.get('type') == 'не определено':
@@ -2944,27 +2843,7 @@ class EnhancedMetroParser:
                 if creation_time:
                     card_data['creation_time'] = creation_time
             
-            # Формируем поле person для отображения в терминале (БЕЗ типа и количества объявлений)
-            if 'seller_info' in card_data and card_data['seller_info']:
-                seller_info = card_data['seller_info']
-                person_parts = []
-                
-                # Имя продавца
-                if 'name' in seller_info:
-                    person_parts.append(f"Имя: {seller_info['name']}")
-                
-                # Название агентства
-                if 'agency_name' in seller_info:
-                    person_parts.append(f"Агентство: {seller_info['agency_name']}")
-                
-                # Вся информация после времени публикации
-                if 'all_text_after_time' in seller_info and seller_info['all_text_after_time']:
-                    all_text = ' | '.join(seller_info['all_text_after_time'])
-                    person_parts.append(f"Полная информация: {all_text}")
-                
-                # Объединяем в поле person
-                if person_parts:
-                    card_data['person'] = ' | '.join(person_parts)
+            # Убираем формирование поля person - оставляем только person_type
             
             return card_data
             
