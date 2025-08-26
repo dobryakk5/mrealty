@@ -1022,7 +1022,7 @@ async def main():
                         
                         if remaining_metros:
                             # Создаем новые пачки из оставшихся метро
-                            new_metro_batches = self.create_metro_batches(remaining_metros, args.batch_size)
+                            new_metro_batches = batch_parser.create_metro_batches(remaining_metros, args.batch_size)
                             metro_batches = new_metro_batches
                             
                             print(f"   • Создано {len(new_metro_batches)} новых пачек:")
