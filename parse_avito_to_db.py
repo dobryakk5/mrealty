@@ -598,7 +598,7 @@ class MetroBatchParser:
             
             # Запускаем парсинг множественных метро
             success, saved_count, total_cards = await self.parser.parse_single_metro(
-                metro_id=metro_ids[0],  # Первое метро как основное
+                metro_id=metro_ids[-1],  # Последнее метро как основное для отслеживания страниц
                 max_pages=max_pages,
                 max_cards=max_cards,
                 start_page=start_page,
