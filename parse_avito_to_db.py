@@ -754,12 +754,18 @@ class MetroBatchParser:
                 successful_batches += 1
                 print(f"✅ Пачка {i+1} обработана успешно")
                 
-                # Обновляем прогресс для каждого метро в пачке
+                # 🔧 ИСПРАВЛЕНИЕ: Обновляем прогресс только ПОСЛЕ завершения всего батча
                 if use_progress_tracking and session_id:
-                    for metro in metro_batch:
-                        total_metros_processed += 1
-                        await update_parsing_progress(session_id, metro['id'], total_metros_processed)
+                    # Увеличиваем счетчик обработанных метро
+                    total_metros_processed += len(metro_batch)
+                    
+                    # Сохраняем ID ПОСЛЕДНЕГО метро в батче как текущее обработанное
+                    last_metro_in_batch = metro_batch[-1]  # Последнее метро в батче
+                    await update_parsing_progress(session_id, last_metro_in_batch['id'], total_metros_processed)
+                    
                     print(f"📊 Прогресс обновлен: {total_metros_processed} метро обработано")
+                    print(f"🎯 Следующий батч начнется с метро ID: {last_metro_in_batch['id'] + 1}")
+                    print(f"✅ Батч завершен: метро {[m['id'] for m in metro_batch]} обработаны")
             else:
                 failed_batches += 1
                 print(f"❌ Пачка {i+1} обработана с ошибками")
@@ -790,6 +796,9 @@ class MetroBatchParser:
         """
         Определяет, с какой пачки нужно продолжить парсинг, если сессия активна.
         
+        🔧 ИСПРАВЛЕНИЕ: Теперь ищем ПЕРВОЕ метро ПОСЛЕ current_metro_id,
+        так как current_metro_id указывает на ПОСЛЕДНЕЕ обработанное метро в предыдущем батче.
+        
         Args:
             metro_batches (list): Список пачек метро
             progress (dict): Прогресс парсинга из БД
@@ -798,35 +807,42 @@ class MetroBatchParser:
         Returns:
             int: Индекс пачки, с которой нужно продолжить парсинг, или -1, если не нужно продолжать.
         """
-        current_batch_index = -1
-        expected_metro_id = progress['current_metro_id']
+        last_processed_metro_id = progress['current_metro_id']
+        next_metro_id = last_processed_metro_id + 1  # Следующее метро после последнего обработанного
         
+        print(f"🔍 Ищем место возобновления:")
+        print(f"   • Последнее обработанное метро: {last_processed_metro_id}")
+        print(f"   • Следующее метро для парсинга: {next_metro_id}")
+        
+        # Ищем пачку, содержащую следующее метро
+        current_batch_index = -1
         for i, batch in enumerate(metro_batches):
             for metro in batch:
-                if metro['id'] == expected_metro_id:
+                if metro['id'] == next_metro_id:
                     current_batch_index = i
+                    print(f"   • Найдено в пачке {i+1}: {[m['id'] for m in batch]}")
                     break
             if current_batch_index != -1:
                 break
         
         if current_batch_index == -1:
-            # Если метро не найдено в текущих пачках, значит, оно уже обработано
-            print(f"✅ Все метро после ID {expected_metro_id} с avito_id и is_msk уже обработаны")
+            # Если следующее метро не найдено в текущих пачках
+            print(f"✅ Все метро после ID {last_processed_metro_id} уже обработаны")
+            print(f"   • Следующее метро {next_metro_id} не найдено в доступных пачках")
             return -1
         
-        # Проверяем, можно ли продолжить с текущего метро
-        current_metro_can_continue = False
+        # Проверяем, можно ли продолжить с найденного метро
+        target_metro = None
         for metro in metro_batches[current_batch_index]:
-            if metro['id'] == expected_metro_id:
-                if metro['avito_id'] and metro.get('is_msk') is not False:
-                    current_metro_can_continue = True
+            if metro['id'] == next_metro_id:
+                target_metro = metro
                 break
         
-        if current_metro_can_continue:
-            # Если можно продолжить, возвращаем индекс пачки
+        if target_metro and target_metro['avito_id'] and target_metro.get('is_msk') is not False:
+            print(f"✅ Метро {next_metro_id} готово к парсингу")
             return current_batch_index
         else:
-            # Если нельзя продолжить, возвращаем -1, чтобы создать новую сессию
+            print(f"⚠️ Метро {next_metro_id} не готово к парсингу (нет avito_id или не в Москве)")
             return -1
 
 async def main():
@@ -990,14 +1006,38 @@ async def main():
                         metro_batches, progress, args.start_page
                     )
                     
-                    if current_batch_index > 0:
+                    if current_batch_index >= 0:
                         print(f"🔄 Продолжаем с пачки {current_batch_index + 1}/{len(metro_batches)}")
-                        metro_batches = metro_batches[current_batch_index:]
-                        # Обновляем start_page для первой пачки
-                        if current_batch_index > 0:
-                            args.start_page = 1  # Сбрасываем start_page для продолжения
+                        
+                        # 🔧 ИСПРАВЛЕНИЕ: Создаем НОВЫЙ батч начиная со следующего метро
+                        last_processed_id = progress['current_metro_id']
+                        next_metro_id = last_processed_id + 1
+                        
+                        print(f"   • Последнее обработанное метро: {last_processed_id}")
+                        print(f"   • Следующее метро для парсинга: {next_metro_id}")
+                        print(f"   • Создаем новый батч начиная с метро {next_metro_id}")
+                        
+                        # Создаем новый список метро начиная со следующего
+                        remaining_metros = [metro for metro in metro_list if metro['id'] >= next_metro_id]
+                        
+                        if remaining_metros:
+                            # Создаем новые пачки из оставшихся метро
+                            new_metro_batches = self.create_metro_batches(remaining_metros, args.batch_size)
+                            metro_batches = new_metro_batches
+                            
+                            print(f"   • Создано {len(new_metro_batches)} новых пачек:")
+                            for i, batch in enumerate(new_metro_batches):
+                                metro_ids = [metro['id'] for metro in batch]
+                                print(f"     Пачка {i+1}: {metro_ids}")
+                        else:
+                            print("✅ Все метро обработаны!")
+                            return True
+                        
+                        # Обновляем start_page для продолжения
+                        args.start_page = 1  # Сбрасываем start_page для продолжения
+                        print(f"   • Сбрасываем start_page на 1 для продолжения")
                     else:
-                        print(f"🆕 Начинаем с первой пачки")
+                        print(f"🆕 Начинаем с первой пачки (не найдено место возобновления)")
                 else:
                     print(f"🆕 Создаем новую сессию парсинга батчей")
             
