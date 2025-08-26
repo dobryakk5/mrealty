@@ -7,6 +7,46 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
+# Функции для форматирования данных
+def format_date(date_value):
+    """Форматирует дату из ISO формата в DD.MM.YYYY"""
+    if not date_value:
+        return ""
+    
+    try:
+        # Если это строка в ISO формате
+        if isinstance(date_value, str):
+            from datetime import datetime
+            # Парсим ISO формат
+            if 'T' in date_value:
+                dt = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+            else:
+                dt = datetime.fromisoformat(date_value)
+        else:
+            # Если это уже datetime объект
+            dt = date_value
+        
+        # Форматируем в DD.MM.YYYY
+        return dt.strftime("%d.%m.%Y")
+    except Exception as e:
+        print(f"Ошибка форматирования даты {date_value}: {e}")
+        return str(date_value)
+
+def format_boolean(bool_value):
+    """Форматирует логическое значение в 'да' или пусто"""
+    if bool_value is None:
+        return ""
+    
+    # Преобразуем в строку и проверяем
+    str_value = str(bool_value).lower().strip()
+    
+    # Проверяем различные варианты True
+    if str_value in ['true', '1', 'yes', 'да', 'активно', 'active']:
+        return "да"
+    
+    # Все остальное - пусто
+    return ""
+
 def extract_listing_comments(text: str, urls: list[str]) -> list[str]:
     """
     Извлекает комментарии между ссылками для каждого объявления
@@ -74,28 +114,28 @@ async def handle_text_message(message: Message):
     use_embedded = "подбор" in text.lower() and "подбор-" not in text.lower()  # "подбор" = встроенные, "подбор-" = обычные
     urls, url_count = extract_urls(text)
     
-    # Извлекаем метро из первого URL для названий файлов
-    metro_info = "метро"
-    if urls:
-        try:
-            from listings_processor import listings_processor
-            listing_info = listings_processor.extract_listing_info(urls[0])
-            if listing_info.get('metro') and listing_info['metro'] != 'N/A':
-                metro_info = listing_info['metro']
-        except Exception as e:
-            print(f"Ошибка при извлечении метро: {e}")
-            metro_info = "метро"
-
+    # Сразу отправляем подтверждение получения ссылок
     if url_count == 0:
         await message.answer("📋 Отправьте ссылки на объявления CIAN для анализа.\n\n"
                              "💡 Для получения Excel-отчета просто отправьте ссылки.\n"
                              "🖼️ Для просмотра фотографий напишите 'подбор' + ссылки.\n"
                              "🔗 Для обычных ссылок: 'подбор-' + ссылки.")
         return
-
+    
     await message.answer(f"✅ Принято ссылок: {url_count}")
-
-
+    
+    # Извлекаем метро из первого URL для названий файлов
+    metro_info = "метро"
+    first_listing_info = None  # Сохраняем результат первого парсинга
+    if urls:
+        try:
+            from listings_processor import listings_processor
+            first_listing_info = await listings_processor.extract_listing_info(urls[0])
+            if first_listing_info.get('metro') and first_listing_info['metro'] != 'N/A':
+                metro_info = first_listing_info['metro']
+        except Exception as e:
+            print(f"Ошибка при извлечении метро: {e}")
+            metro_info = "метро"
 
     try:
         if is_selection_request:
@@ -133,7 +173,7 @@ async def handle_text_message(message: Message):
                 print(f"📝 Найдено комментариев к объявлениям: {len(listing_comments)}")
 
             if use_embedded:
-                html_content, photo_stats = await listings_processor.generate_html_gallery_embedded(urls, message.from_user.id, subtitle, remove_watermarks=True, max_photos_per_listing=max_photos_per_listing, listing_comments=listing_comments)
+                html_content, photo_stats = await listings_processor.generate_html_gallery_embedded(urls, message.from_user.id, subtitle, remove_watermarks=True, max_photos_per_listing=max_photos_per_listing, listing_comments=listing_comments, pre_parsed_data=first_listing_info)
                 filename = f"Подбор_{metro_info}.html"
                 caption = f"🏠 Подбор недвижимости"
                 
@@ -150,7 +190,7 @@ async def handle_text_message(message: Message):
                         else:
                             await message.answer(f"⚠️ Фото не найдены в объявлении {stat['listing_number']}")
             else:
-                html_content = listings_processor.generate_html_gallery(urls, message.from_user.id, subtitle, listing_comments)
+                html_content = await listings_processor.generate_html_gallery(urls, message.from_user.id, subtitle, listing_comments)
                 filename = f"Подбор_{metro_info}.html"
                 caption = f"🏠 Подбор недвижимости (обычные ссылки)"
 
@@ -201,6 +241,15 @@ async def handle_text_message(message: Message):
                             if isinstance(ad, dict):
                                 ad_copy = ad.copy()  # Создаем копию, чтобы не изменять оригинал
                                 ad_copy['Адрес'] = address
+                                
+                                # Форматируем даты и логические значения
+                                if 'created' in ad_copy:
+                                    ad_copy['created'] = format_date(ad_copy['created'])
+                                if 'updated' in ad_copy:
+                                    ad_copy['updated'] = format_date(ad_copy['updated'])
+                                if 'is_active' in ad_copy:
+                                    ad_copy['is_active'] = format_boolean(ad_copy['is_active'])
+                                
                                 similar_data.append(ad_copy)
                     
                     if similar_data:
@@ -248,9 +297,11 @@ async def handle_text_message(message: Message):
                                     ws.cell(row=current_row, column=1, value=ad.get('url', ''))
                                     ws.cell(row=current_row, column=2, value=ad.get('price', ''))
                                     ws.cell(row=current_row, column=3, value=ad.get('rooms', ''))
-                                    ws.cell(row=current_row, column=4, value=ad.get('created', ''))
-                                    ws.cell(row=current_row, column=5, value=ad.get('updated', ''))
-                                    ws.cell(row=current_row, column=6, value=ad.get('is_active', ''))
+                                    # Форматируем даты
+                                    ws.cell(row=current_row, column=4, value=format_date(ad.get('created', '')))
+                                    ws.cell(row=current_row, column=5, value=format_date(ad.get('updated', '')))
+                                    # Форматируем логическое значение
+                                    ws.cell(row=current_row, column=6, value=format_boolean(ad.get('is_active', '')))
                                     ws.cell(row=current_row, column=7, value=ad.get('person_type', ''))
                                     current_row += 1
                             

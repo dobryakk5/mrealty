@@ -9,13 +9,21 @@ from io import BytesIO
 from typing import List, Dict, Any, Tuple
 import asyncio
 from datetime import datetime
-
+from selenium.webdriver.common.by import By
 
 # Асинхронное сохранение в БД
 from db_handler import save_listings, find_similar_ads_grouped, call_update_ad
 
 # Импортируем модуль для работы с фотографиями
 from photo_processor import PhotoProcessor
+
+# Импортируем парсер Avito
+try:
+    from avito_parser_integration import AvitoCardParser
+    AVITO_AVAILABLE = True
+except ImportError:
+    AVITO_AVAILABLE = False
+    print("⚠️ Модуль avito_parser_integration не найден, парсинг Avito недоступен")
 
 # Заголовки для HTTP-запросов
 HEADERS = {
@@ -32,6 +40,82 @@ class ListingsProcessor:
     
     def __init__(self):
         self.photo_processor = PhotoProcessor()
+    
+    def is_avito_url(self, url: str) -> bool:
+        """Определяет, является ли ссылка ссылкой на Avito"""
+        return 'avito.ru' in url.lower()
+    
+    def is_cian_url(self, url: str) -> bool:
+        """Определяет, является ли ссылка ссылкой на Cian"""
+        return 'cian.ru' in url.lower()
+    
+    def get_url_source(self, url: str) -> int:
+        """Возвращает источник ссылки: 1 - Avito, 4 - Cian"""
+        if self.is_avito_url(url):
+            return 1  # Avito
+        elif self.is_cian_url(url):
+            return 4  # Cian
+        else:
+            return 0  # Неизвестный источник
+    
+    async def parse_avito_listing(self, url: str) -> dict:
+        """Парсит объявление с Avito и возвращает данные в формате для БД"""
+        if not AVITO_AVAILABLE:
+            print("❌ Парсер Avito недоступен")
+            return None
+        
+        try:
+            print(f"🔄 Парсим объявление Avito: {url}")
+            
+            # Создаем парсер Avito
+            parser = AvitoCardParser()
+            
+            # Парсим полную страницу объявления
+            parsed_data = parser.parse_avito_page(url)
+            if not parsed_data:
+                print("❌ Не удалось спарсить данные объявления Avito")
+                return None
+            
+            # Преобразуем данные в формат для БД
+            db_data = parser.prepare_data_for_db(parsed_data)
+            if not db_data:
+                print("❌ Не удалось подготовить данные для БД")
+                return None
+            
+            # Добавляем источник
+            db_data['source'] = 1  # Avito
+            
+            print(f"✅ Объявление Avito успешно спарсено")
+            return db_data
+            
+        except Exception as e:
+            print(f"❌ Ошибка парсинга объявления Avito: {e}")
+            return None
+        finally:
+            # Закрываем браузер
+            if 'parser' in locals() and parser.driver:
+                try:
+                    parser.cleanup()
+                except:
+                    pass
+    
+    async def parse_listing_universal(self, url: str) -> dict:
+        """Универсальный метод для парсинга объявлений с Cian и Avito"""
+        try:
+            if self.is_avito_url(url):
+                print(f"🏠 Парсим объявление Avito: {url}")
+                return await self.parse_avito_listing(url)
+            elif self.is_cian_url(url):
+                print(f"🏠 Парсим объявление Cian: {url}")
+                # Используем существующий метод для Cian
+                session = requests.Session()
+                return parse_listing(url, session)
+            else:
+                print(f"⚠️ Неизвестный источник ссылки: {url}")
+                return None
+        except Exception as e:
+            print(f"❌ Ошибка универсального парсинга: {e}")
+            return None
     
     def extract_photo_urls(self, soup: BeautifulSoup) -> list[str]:
         """Извлекает ссылки на все фотографии из галереи CIAN"""
@@ -75,40 +159,114 @@ class ListingsProcessor:
             print(f"Ошибка при извлечении фотографий: {e}")
             return []
     
-    async def extract_photo_urls_from_url(self, url: str) -> list[str]:
-        """Асинхронно получает URL и извлекает ссылки на фотографии"""
+    def extract_avito_photo_urls(self, soup: BeautifulSoup) -> list[str]:
+        """Извлекает ссылки на фотографии с Avito"""
+        photo_urls = []
+        
         try:
-            # Используем более надежный способ для асинхронных запросов
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: requests.get(url, headers=HEADERS))
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-            return self.extract_photo_urls(soup)
+            # Ищем галерею фотографий на Avito
+            # Основные изображения в карточке
+            images = soup.find_all('img', src=True)
+            for img in images:
+                src = img.get('src')
+                if src and src.startswith('http') and ('avito.ru' in src or 'img.avito.ru' in src):
+                    photo_urls.append(src)
+            
+            # Ищем изображения в background-image
+            elements_with_bg = soup.find_all(style=re.compile(r'background-image'))
+            for elem in elements_with_bg:
+                style = elem.get('style', '')
+                bg_match = re.search(r'background-image:\s*url\(["\']?([^"\')\s]+)["\']?\)', style)
+                if bg_match:
+                    bg_url = bg_match.group(1)
+                    if bg_url.startswith('http') and ('avito.ru' in bg_url or 'img.avito.ru' in bg_url):
+                        photo_urls.append(bg_url)
+            
+            # Убираем дубликаты, сохраняя порядок
+            seen = set()
+            unique_photos = []
+            for url in photo_urls:
+                if url not in seen:
+                    seen.add(url)
+                    unique_photos.append(url)
+            
+            return unique_photos
+            
         except Exception as e:
-            print(f"Ошибка при получении URL {url}: {e}")
+            print(f"Ошибка при извлечении фотографий Avito: {e}")
             return []
     
-    def extract_listing_info(self, url: str) -> dict:
+    async def extract_photo_urls_from_url(self, listing_url: str) -> list[str]:
+        """Асинхронно получает URL и извлекает ссылки на фотографии"""
+        try:
+            # Определяем источник ссылки
+            if self.is_avito_url(listing_url):
+                print(f"📸 Извлекаем фотографии с Avito: {listing_url}")
+                # Для Avito используем более надежный способ для асинхронных запросов
+                response = await asyncio.get_event_loop().run_in_executor(None, lambda: requests.get(listing_url, headers=HEADERS))
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+                return self.extract_avito_photo_urls(soup)
+            else:
+                print(f"📸 Извлекаем фотографии с Cian: {listing_url}")
+                # Для Cian используем существующую логику
+                response = await asyncio.get_event_loop().run_in_executor(None, lambda: requests.get(listing_url, headers=HEADERS))
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+                return self.extract_photo_urls(soup)
+        except Exception as e:
+            print(f"Ошибка при получении URL {listing_url}: {e}")
+            return []
+    
+    async def extract_listing_info(self, url: str) -> dict:
         """Извлекает основную информацию об объявлении"""
         try:
-            response = requests.get(url, headers=HEADERS)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Парсим основную информацию
-            listing_data = parse_listing(url, requests.Session())
-            
-            # Формируем структурированную информацию
-            info = {
-                'rooms': listing_data.get('Комнат', 'N/A'),
-                'price': listing_data.get('Цена_raw', 'N/A'),
-                'floor': listing_data.get('Этаж', 'N/A'),
-                'total_area': listing_data.get('Общая площадь', 'N/A'),
-                'kitchen_area': listing_data.get('Площадь кухни', 'N/A'),
-                'metro': listing_data.get('Минут метро', 'N/A')
-            }
-            
-            return info
+            # Определяем источник ссылки
+            if self.is_avito_url(url):
+                print(f"🏠 Извлекаем информацию об объявлении Avito: {url}")
+                # Для Avito используем асинхронный парсинг
+                listing_data = await self.parse_avito_listing(url)
+                if not listing_data:
+                    return {
+                        'rooms': 'N/A',
+                        'price': 'N/A',
+                        'floor': 'N/A',
+                        'total_area': 'N/A',
+                        'kitchen_area': 'N/A',
+                        'metro': 'N/A'
+                    }
+                
+                # Преобразуем данные Avito в формат для отображения
+                info = {
+                    'rooms': listing_data.get('rooms', 'N/A'),
+                    'price': listing_data.get('price', 'N/A'),
+                    'floor': listing_data.get('floor', 'N/A'),
+                    'total_area': listing_data.get('total_area', 'N/A'),
+                    'kitchen_area': listing_data.get('kitchen_area', 'N/A'),
+                    'metro': listing_data.get('metro_time', 'N/A'),
+                    'photo_urls': listing_data.get('photo_urls', [])  # Добавляем фотографии
+                }
+                return info
+            else:
+                # Для Cian используем существующую логику
+                print(f"🏠 Извлекаем информацию об объявлении Cian: {url}")
+                response = requests.get(url, headers=HEADERS)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Парсим основную информацию
+                listing_data = parse_listing(url, requests.Session())
+                
+                # Формируем структурированную информацию
+                info = {
+                    'rooms': listing_data.get('Комнат', 'N/A'),
+                    'price': listing_data.get('Цена_raw', 'N/A'),
+                    'floor': listing_data.get('Этаж', 'N/A'),
+                    'total_area': listing_data.get('Общая площадь', 'N/A'),
+                    'kitchen_area': listing_data.get('Площадь кухни', 'N/A'),
+                    'metro': listing_data.get('Минут метро', 'N/A')
+                }
+                return info
         except Exception as e:
             print(f"Ошибка при извлечении информации об объявлении {url}: {str(e)}")
             return {
@@ -120,7 +278,7 @@ class ListingsProcessor:
                 'metro': 'N/A'
             }
     
-    def generate_html_gallery(self, listing_urls: list[str], user_id: int, subtitle: str = None, listing_comments: list[str] = None) -> str:
+    async def generate_html_gallery(self, listing_urls: list[str], user_id: int, subtitle: str = None, listing_comments: list[str] = None) -> str:
         """Генерирует HTML галерею с внешними ссылками на фотографии"""
         html_parts = []
         
@@ -133,7 +291,26 @@ class ListingsProcessor:
             <title>Подбор недвижимости</title>
             <style>
                 body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
-                .listing { background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                .listing { 
+                    background: white; 
+                    margin: 20px 0; 
+                    padding: 20px; 
+                    border-radius: 10px; 
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    display: flex;
+                    gap: 30px;
+                    align-items: flex-start;
+                }
+                
+                .listing-info {
+                    flex: 1;
+                    min-width: 0;
+                }
+                
+                .listing-photos {
+                    flex: 1;
+                    min-width: 0;
+                }
                 .listing h3 { color: #333; margin-top: 0; margin-bottom: 15px; }
                 .listing p { margin: 8px 0; color: #555; }
                 .listing strong { color: #333; }
@@ -170,7 +347,18 @@ class ListingsProcessor:
                 /* Мобильная адаптация */
                 @media (max-width: 768px) {
                     body { margin: 10px; }
-                    .listing { padding: 15px; margin: 15px 0; }
+                    .listing { 
+                        padding: 15px; 
+                        margin: 15px 0; 
+                        flex-direction: column;
+                        gap: 20px;
+                        width: 100%;
+                        box-sizing: border-box;
+                    }
+                    .listing-info, .listing-photos {
+                        width: 100%;
+                        min-width: 100%;
+                    }
                     .photo-grid { 
                         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); 
                         gap: 6px; 
@@ -193,14 +381,61 @@ class ListingsProcessor:
         
         html_parts.append("")
         
+        # Собираем данные для сохранения в БД
+        db_listings = []
+        
         for i, listing_url in enumerate(listing_urls, 1):
             try:
-                # Парсим объявление
-                listing_data = parse_listing(listing_url, requests.Session())
-                
-                # Извлекаем фотографии
-                soup = BeautifulSoup(requests.get(listing_url, headers=HEADERS).text, 'html.parser')
-                photo_urls = self.extract_photo_urls(soup)
+                # Парсим объявление в зависимости от источника
+                if self.is_avito_url(listing_url):
+                    # Для Avito используем асинхронный парсинг
+                    listing_data = await self.parse_avito_listing(listing_url)
+                    if not listing_data:
+                        html_parts.append(f"""
+                        <div class="listing">
+                            <h3>Вариант #{i}</h3>
+                            <p style="color: red;">Ошибка при парсинге Avito</p>
+                        </div>
+                        """)
+                        continue
+                    
+                    # Сохраняем данные для БД
+                    db_listings.append(listing_data)
+                    
+                    # Преобразуем данные Avito в формат для отображения
+                    listing_data_display = {
+                        'Комнат': listing_data.get('rooms', 'N/A'),
+                        'Цена_raw': listing_data.get('price', 'N/A'),
+                        'Этаж': listing_data.get('floor', 'N/A'),
+                        'Общая площадь': listing_data.get('total_area', 'N/A'),
+                        'Площадь кухни': listing_data.get('kitchen_area', 'N/A'),
+                        'Минут метро': listing_data.get('metro_time', 'N/A')
+                    }
+                    
+                    # Для Avito фотографии не извлекаем (требует отдельной логики)
+                    photo_urls = []
+                else:
+                    # Для Cian используем существующую логику
+                    listing_data = parse_listing(listing_url, requests.Session())
+                    listing_data_display = listing_data
+                    
+                    # Извлекаем фотографии
+                    soup = BeautifulSoup(requests.get(listing_url, headers=HEADERS).text, 'html.parser')
+                    photo_urls = self.extract_photo_urls(soup)
+                    
+                    # Сохраняем данные Cian для БД
+                    cian_data = {
+                        'url': listing_url,
+                        'source': 4,  # Cian
+                        'rooms': listing_data.get('Комнат', 'N/A'),
+                        'price': listing_data.get('Цена_raw', 'N/A'),
+                        'floor': listing_data.get('Этаж', 'N/A'),
+                        'total_area': listing_data.get('Общая площадь', 'N/A'),
+                        'kitchen_area': listing_data.get('Площадь кухни', 'N/A'),
+                        'metro_time': listing_data.get('Минут метро', 'N/A'),
+                        'photo_urls': photo_urls if photo_urls else []
+                    }
+                    db_listings.append(cian_data)
                 
                 html_parts.append(f"""
                 <div class="listing">
@@ -214,28 +449,14 @@ class ListingsProcessor:
                 html_parts.append("")
                 
                 # Добавляем основную информацию
-                if 'Комнат' in listing_data and listing_data['Комнат']:
-                    html_parts.append(f"<p><strong>Комнат:</strong> {listing_data['Комнат']}</p>")
-                if 'Цена_raw' in listing_data and listing_data['Цена_raw']:
-                    html_parts.append(f"<p><strong>Цена:</strong> {listing_data['Цена_raw']:,} ₽</p>")
+                html_parts.append(f"<p><strong>Комнат:</strong> {listing_data_display.get('Комнат', 'N/A')}</p>")
+                html_parts.append(f"<p><strong>Цена:</strong> {listing_data_display.get('Цена_raw', 'N/A')}</p>")
+                html_parts.append(f"<p><strong>Этаж:</strong> {listing_data_display.get('Этаж', 'N/A')}</p>")
+                html_parts.append(f"<p><strong>Общая площадь:</strong> {listing_data_display.get('Общая площадь', 'N/A')} м²</p>")
+                html_parts.append(f"<p><strong>Кухня:</strong> {listing_data_display.get('Площадь кухни', 'N/A')} м²</p>")
+
                 
-                # Добавляем этаж/этажность
-                if 'Этаж' in listing_data and listing_data['Этаж']:
-                    html_parts.append(f"<p><strong>Этаж:</strong> {listing_data['Этаж']}</p>")
-                
-                # Добавляем метраж общий
-                if 'Общая площадь' in listing_data and listing_data['Общая площадь']:
-                    html_parts.append(f"<p><strong>Общая площадь:</strong> {listing_data['Общая площадь']} м²</p>")
-                
-                # Добавляем кухню
-                if 'Площадь кухни' in listing_data and listing_data['Площадь кухни']:
-                    html_parts.append(f"<p><strong>Кухня:</strong> {listing_data['Площадь кухни']} м²</p>")
-                
-                # Переименовываем "Метро" в "Минут до метро"
-                if 'Минут метро' in listing_data and listing_data['Минут метро']:
-                    html_parts.append(f"<p><strong>Минут до метро:</strong> {listing_data['Минут метро']}</p>")
-                
-                # Добавляем фотографии
+                # Добавляем фотографии (только для Cian)
                 if photo_urls:
                     # Генерируем сетку фотографий (все фото без ограничений)
                     html_parts.append(f'<div class="photo-grid">')
@@ -257,7 +478,10 @@ class ListingsProcessor:
                         """)
                     html_parts.append('</div>')
                 else:
-                    html_parts.append('<p class="no-photos">📷 Фотографии не найдены</p>')
+                    if self.is_avito_url(listing_url):
+                        html_parts.append('<p class="no-photos">📷 Фотографии Avito (требуют отдельной обработки)</p>')
+                    else:
+                        html_parts.append('<p class="no-photos">📷 Фотографии не найдены</p>')
                 
                 html_parts.append('</div>')
                 
@@ -274,9 +498,20 @@ class ListingsProcessor:
         </html>
         """)
         
+        # Сохраняем все объявления в БД
+        if db_listings:
+            try:
+                print(f"💾 Сохраняем {len(db_listings)} объявлений в БД...")
+                await save_listings(db_listings, user_id)
+                print(f"✅ Объявления успешно сохранены в БД")
+            except Exception as e:
+                print(f"❌ Ошибка сохранения в БД: {e}")
+        else:
+            print(f"⚠️ Нет данных для сохранения в БД")
+        
         return ''.join(html_parts)
     
-    async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False, max_photos_per_listing: int = None, listing_comments: list[str] = None) -> tuple[str, list[dict]]:
+    async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False, max_photos_per_listing: int = None, listing_comments: list[str] = None, pre_parsed_data: dict = None) -> tuple[str, list[dict]]:
         """Генерирует HTML галерею с встроенными Base64 изображениями и возвращает статистику по фото"""
         html_content = f"""
         <!DOCTYPE html>
@@ -296,7 +531,20 @@ class ListingsProcessor:
                     margin: 20px 0; 
                     padding: 20px; 
                     border-radius: 10px; 
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    display: flex;
+                    gap: 30px;
+                    align-items: flex-start;
+                }}
+                
+                .listing-info {{
+                    flex: 1;
+                    min-width: 0;
+                }}
+                
+                .listing-photos {{
+                    flex: 1;
+                    min-width: 0;
                 }}
                 .listing h3 {{ 
                     color: #333; 
@@ -356,7 +604,28 @@ class ListingsProcessor:
                     transition: border-color 0.2s;
                     background: #f8f9fa;
                 }}
-                                .photo-item img:hover {{
+                
+                /* Контейнер для главного фото */
+                .main-photo-container {{
+                    margin: 20px 0;
+                    text-align: center;
+                }}
+                
+                .main-photo-container img {{
+                    max-width: 100%;
+                    height: auto;
+                    max-height: 500px;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                    cursor: pointer;
+                    transition: transform 0.2s ease;
+                }}
+                
+                .main-photo-container img:hover {{
+                    transform: scale(1.02);
+                }}
+                
+                .photo-item img:hover {{
                     border-color: #0066cc;
                     cursor: pointer;
                     transform: scale(1.02);
@@ -492,7 +761,18 @@ class ListingsProcessor:
                 /* Мобильная адаптация */
                 @media (max-width: 768px) {{
                     body {{ margin: 10px; }}
-                    .listing {{ padding: 15px; margin: 15px 0; }}
+                    .listing {{ 
+                        padding: 15px; 
+                        margin: 15px 0; 
+                        flex-direction: column;
+                        gap: 20px;
+                        width: 100%;
+                        box-sizing: border-box;
+                    }}
+                    .listing-info, .listing-photos {{
+                        width: 100%;
+                        min-width: 100%;
+                    }}
                     .photo-grid {{ 
                         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); 
                         gap: 6px; 
@@ -501,6 +781,12 @@ class ListingsProcessor:
                     .photo-item img, .photo-fallback {{ 
                         height: 120px; 
                     }}
+                    
+                    /* Мобильная адаптация для главного фото */
+                    .main-photo-container img {{
+                        max-height: 300px;
+                    }}
+                    
                     .main-title {{ font-size: 24px; }}
                     .subtitle {{ font-size: 16px; }}
                     
@@ -569,54 +855,135 @@ class ListingsProcessor:
         # Собираем статистику по фото для каждого объявления
         photo_stats = []
         
+        # Собираем данные для сохранения в БД
+        db_listings = []
+        
         for i, listing_url in enumerate(listing_urls, 1):
             try:
                 print(f"🔍 Обрабатываю объявление {i}: {listing_url}")
                 
-                # Получаем фото для этого объявления
-                photo_urls = await self.extract_photo_urls_from_url(listing_url)
-                print(f"📸 Найдено URL фото для объявления {i}: {len(photo_urls)}")
-                
-                if photo_urls:
-                    # Ограничиваем количество фото если указано
-                    if max_photos_per_listing and len(photo_urls) > max_photos_per_listing:
-                        photo_urls = photo_urls[:max_photos_per_listing]
-                        print(f"🔢 Ограничено до {max_photos_per_listing} фото для объявления {i}")
-                    
-                    # Обрабатываем фото с поддержкой водяных знаков
-                    if remove_watermarks:
-                        processed_photos = self.photo_processor.process_photos_for_embedded_html(photo_urls, remove_watermarks=True)
+                # Парсим объявление в зависимости от источника
+                if self.is_avito_url(listing_url):
+                    # Для Avito используем асинхронный парсинг
+                    # Если это первый URL и у нас есть предварительно спарсенные данные, используем их
+                    if i == 1 and pre_parsed_data:
+                        listing_data = pre_parsed_data
+                        print(f"🔄 Используем предварительно спарсенные данные для URL #{i}")
                     else:
-                        processed_photos = self.photo_processor.process_photos_for_embedded_html(photo_urls, remove_watermarks=False)
+                        listing_data = await self.parse_avito_listing(listing_url)
                     
-                    # Проверка на дублирование внутри объявления (оставляем только эту проверку)
-                    # Убираем глобальную проверку между объявлениями, так как она может блокировать легитимные фото
-                    print(f"📸 Обработано фото для объявления {i}: {len(processed_photos)}")
+                    if not listing_data:
+                        html_content += f"""
+                        <div class="listing">
+                            <div class="listing-info">
+                                <h3>Вариант #{i}</h3>
+                                <p>Ошибка при парсинге Avito</p>
+                            </div>
+                            <div class="listing-photos">
+                                <p>📷 Фотографии недоступны</p>
+                            </div>
+                        </div>
+                        """
+                        continue
                     
-                    # Извлекаем информацию об объявлении
-                    listing_info = self.extract_listing_info(listing_url)
+                    # Сохраняем данные для БД
+                    db_listings.append(listing_data)
                     
-                    html_content += f"""
-                    <div class="listing">
+                    # Преобразуем данные Avito в формат для отображения
+                    listing_info = {
+                        'rooms': listing_data.get('rooms', 'N/A'),
+                        'price': listing_data.get('price', 'N/A'),
+                        'floor': listing_data.get('floor', 'N/A'),
+                        'total_area': listing_data.get('total_area', 'N/A'),
+                        'kitchen_area': listing_data.get('kitchen_area', 'N/A'),
+                        'metro': listing_data.get('metro_time', 'N/A')
+                    }
+                    
+                    # Для Avito фотографии не обрабатываем (требует отдельной логики)
+                    processed_photos = []
+                    
+                    # Извлекаем URL фотографий Avito
+                    if 'photo_urls' in listing_data and listing_data['photo_urls']:
+                        photo_urls = listing_data['photo_urls']
+                        print(f"📸 Найдено {len(photo_urls)} фотографий Avito")
+                        
+                        # Обрабатываем фотографии Avito
+                        if photo_urls:
+                            processed_photos = self.photo_processor.process_photos_for_embedded_html(
+                                photo_urls, remove_watermarks
+                            )
+                            print(f"✅ Обработано {len(processed_photos)} фотографий Avito")
+                    else:
+                        print(f"⚠️ Фотографии Avito не найдены в данных")
+                else:
+                    # Для Cian используем существующую логику
+                    listing_info = await self.extract_listing_info(listing_url)
+                    
+                    # Извлекаем URL фотографий
+                    photo_urls = await self.extract_photo_urls_from_url(listing_url)
+                    
+                    # Обрабатываем фотографии
+                    if photo_urls:
+                        processed_photos = self.photo_processor.process_photos_for_embedded_html(
+                            photo_urls, remove_watermarks
+                        )
+                    else:
+                        processed_photos = []
+                    
+                    # Сохраняем данные Cian для БД
+                    cian_data = {
+                        'url': listing_url,
+                        'source': 4,  # Cian
+                        'rooms': listing_info.get('rooms', 'N/A'),
+                        'price': listing_info.get('price', 'N/A'),
+                        'floor': listing_info.get('floor', 'N/A'),
+                        'total_area': listing_info.get('total_area', 'N/A'),
+                        'kitchen_area': listing_info.get('kitchen_area', 'N/A'),
+                        'metro_time': listing_info.get('metro', 'N/A'),
+                        'photo_urls': photo_urls if photo_urls else []
+                    }
+                    db_listings.append(cian_data)
+                
+                html_content += f"""
+                <div class="listing">
+                    <div class="listing-info">
                         <h3>Вариант #{i}</h3>
-                    """
-                    
-                    # Добавляем комментарий к объявлению, если есть
-                    if listing_comments and i <= len(listing_comments) and listing_comments[i-1]:
-                        html_content += f'<p class="listing-comment">{listing_comments[i-1]}</p>'
-                    
-                    html_content += f"""
+                """
+                
+                # Добавляем комментарий к объявлению, если есть
+                if listing_comments and i <= len(listing_comments) and listing_comments[i-1]:
+                    html_content += f'<p class="listing-comment">{listing_comments[i-1]}</p>'
+                
+                html_content += f"""
                         <p><strong>Комнат:</strong> {listing_info.get('rooms', 'N/A')}</p>
                         <p><strong>Цена:</strong> {listing_info.get('price', 'N/A')}</p>
                         <p><strong>Этаж:</strong> {listing_info.get('floor', 'N/A')}</p>
-                        <p><strong>Общая площадь:</strong> {listing_info.get('total_area', 'N/A')}</p>
-                        <p><strong>Кухня:</strong> {listing_info.get('kitchen_area', 'N/A')}</p>
-                        <p><strong>Минут до метро:</strong> {listing_info.get('metro', 'N/A')}</p>
-                        <div class="photo-grid">
-                    """
+                        <p><strong>Общая площадь:</strong> {listing_info.get('total_area', 'N/A')} м²</p>
+                        <p><strong>Кухня:</strong> {listing_info.get('kitchen_area', 'N/A')} м²</p>
+
+                    </div>
                     
-                    # Добавляем фото
-                    for j, photo_data in enumerate(processed_photos, 1):
+                    <div class="listing-photos">
+                """
+                
+                # Добавляем главное фото отдельно (если есть)
+                if processed_photos and len(processed_photos) > 0:
+                    main_photo = processed_photos[0]
+                    if main_photo and 'base64' in main_photo:
+                        html_content += f"""
+                        <div class="main-photo-container">
+                            <img src="data:image/{main_photo['format']};base64,{main_photo['base64']}" 
+                                 alt="Главное фото" 
+                                 loading="lazy"
+                                 onclick="openPhotoModal('data:image/{main_photo['format']};base64,{main_photo['base64']}', 0)"
+                                 title="Кликните для увеличения">
+                        </div>
+                        """
+                
+                # Добавляем сетку с мини-фотками (начиная со второй)
+                if processed_photos and len(processed_photos) > 1:
+                    html_content += '<div class="photo-grid">'
+                    for j, photo_data in enumerate(processed_photos[1:], 2):
                         if photo_data and 'base64' in photo_data:
                             html_content += f"""
                             <div class="photo-item">
@@ -627,33 +994,31 @@ class ListingsProcessor:
                                      title="Кликните для увеличения">
                             </div>
                             """
-                    
-                    # Сохраняем статистику по фото
-                    photo_stats.append({
-                        'listing_number': i,
-                        'photo_count': len(processed_photos),
-                        'url': listing_url
-                    })
-                    
-                    html_content += f"""
-                        </div>
-                    </div>
-                    """
+                    html_content += '</div>'
+                elif processed_photos and len(processed_photos) == 1:
+                    # Если только одно фото, все равно закрываем div
+                    html_content += '<div class="photo-grid"></div>'
                 else:
-                    # Сохраняем статистику для объявления без фото
-                    photo_stats.append({
-                        'listing_number': i,
-                        'photo_count': 0,
-                        'url': listing_url
-                    })
-                    
-                    html_content += f"""
-                    <div class="listing">
-                        <h3>Вариант #{i}</h3>
-                        <p>Фотографии не найдены</p>
+                    html_content += '<div class="photo-grid">'
+                
+                # Добавляем сообщение, если фотографий нет
+                if not processed_photos:
+                    if self.is_avito_url(listing_url):
+                        html_content += '<p>📷 Фотографии Avito не найдены</p>'
+                    else:
+                        html_content += '<p>📷 Фотографии не найдены</p>'
+                
+                # Сохраняем статистику по фото
+                photo_stats.append({
+                    'listing_number': i,
+                    'photo_count': len(processed_photos) if processed_photos else 0,
+                    'url': listing_url
+                })
+                
+                html_content += f"""
                     </div>
-                    """
-                    
+                </div>
+                """
             except Exception as e:
                 # Сохраняем статистику для объявления с ошибкой
                 photo_stats.append({
@@ -665,8 +1030,13 @@ class ListingsProcessor:
                 
                 html_content += f"""
                 <div class="listing">
-                    <h3>Вариант #{i}</h3>
-                    <p>Ошибка при обработке: {str(e)}</p>
+                    <div class="listing-info">
+                        <h3>Вариант #{i}</h3>
+                        <p>Ошибка при обработке: {str(e)}</p>
+                    </div>
+                    <div class="listing-photos">
+                        <p>📷 Фотографии недоступны</p>
+                    </div>
                 </div>
                 """
         
@@ -856,7 +1226,70 @@ class ListingsProcessor:
         </html>
         """
         
+        # Сохраняем все объявления в БД
+        if db_listings:
+            try:
+                print(f"💾 Сохраняем {len(db_listings)} объявлений в БД...")
+                await save_listings(db_listings, user_id)
+                print(f"✅ Объявления успешно сохранены в БД")
+            except Exception as e:
+                print(f"❌ Ошибка сохранения в БД: {e}")
+        else:
+            print(f"⚠️ Нет данных для сохранения в БД")
+        
         return html_content, photo_stats
+
+    async def parse_listings_batch(self, listing_urls: list[str]) -> list[dict]:
+        """Универсальный метод для парсинга списка объявлений с Cian и Avito"""
+        parsed_listings = []
+        
+        for i, url in enumerate(listing_urls, 1):
+            try:
+                print(f"🔄 Парсим объявление {i}/{len(listing_urls)}: {url}")
+                
+                if self.is_avito_url(url):
+                    print(f"🏠 Источник: Avito")
+                    listing_data = await self.parse_avito_listing(url)
+                    if listing_data:
+                        # Добавляем источник
+                        listing_data['source'] = 1  # Avito
+                        parsed_listings.append(listing_data)
+                        print(f"✅ Объявление Avito успешно спарсено")
+                    else:
+                        print(f"❌ Не удалось спарсить объявление Avito")
+                elif self.is_cian_url(url):
+                    print(f"🏠 Источник: Cian")
+                    # Для Cian используем существующую логику
+                    session = requests.Session()
+                    listing_data = parse_listing(url, session)
+                    if listing_data:
+                        # Добавляем источник
+                        listing_data['source'] = 4  # Cian
+                        parsed_listings.append(listing_data)
+                        print(f"✅ Объявление Cian успешно спарсено")
+                    else:
+                        print(f"❌ Не удалось спарсить объявление Cian")
+                else:
+                    print(f"⚠️ Неизвестный источник ссылки: {url}")
+                
+            except Exception as e:
+                print(f"❌ Ошибка при парсинге {url}: {e}")
+                continue
+        
+        print(f"📊 Всего успешно спарсено: {len(parsed_listings)} из {len(listing_urls)}")
+        return parsed_listings
+    
+    def cleanup(self):
+        """Корректно закрывает ресурсы"""
+        try:
+            # PhotoProcessor не имеет метода cleanup, пропускаем
+            pass
+        except Exception as e:
+            print(f"⚠️ Ошибка при очистке ресурсов: {e}")
+    
+    def __del__(self):
+        """Деструктор для автоматической очистки при удалении объекта"""
+        self.cleanup()
 
 def extract_number(text: str):
     if not text or text == '—':
@@ -871,6 +1304,7 @@ def extract_number(text: str):
 async def export_listings_to_excel(listing_urls: list[str], user_id: int, output_path: str = None) -> tuple[BytesIO, int]:
     """
     Парсит список объявлений, сохраняет их в БД и возвращает Excel-файл и request_id.
+    Поддерживает как Cian, так и Avito.
     :param listing_urls: список URL объявлений
     :param user_id: ID пользователя для сохранения в БД
     :param output_path: опциональный путь для сохранения файла на диск
@@ -878,9 +1312,56 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
     """
     sess = requests.Session()
     rows = []
+    
+    # Создаем экземпляр процессора для определения источника ссылок
+    processor = ListingsProcessor()
+    
     for url in listing_urls:
         try:
-            rows.append(parse_listing(url, sess))
+            if processor.is_avito_url(url):
+                print(f"🏠 Парсим объявление Avito: {url}")
+                # Для Avito используем асинхронный парсинг
+                avito_data = await processor.parse_avito_listing(url)
+                if avito_data:
+                    # Преобразуем данные Avito в формат для Excel
+                    excel_data = {
+                        'URL': url,
+                        'Комнат': avito_data.get('rooms', 'N/A'),
+                        'Цена_raw': avito_data.get('price', 'N/A'),
+                        'Этаж': avito_data.get('floor', 'N/A'),
+                        'Общая площадь': avito_data.get('total_area', 'N/A'),
+                        'Жилая площадь': avito_data.get('living_area', 'N/A'),
+                        'Площадь кухни': avito_data.get('kitchen_area', 'N/A'),
+                        'Санузел': avito_data.get('bathroom', 'N/A'),
+                        'Балкон/лоджия': avito_data.get('balcony', 'N/A'),
+                        'Вид из окон': avito_data.get('windows', 'N/A'),
+                        'Ремонт': avito_data.get('renovation', 'N/A'),
+                        'Год постройки': avito_data.get('construction_year', 'N/A'),
+                        'Строительная серия': 'N/A',  # Пусто в Avito
+                        'Тип дома': avito_data.get('house_type', 'N/A'),
+                        'Тип перекрытий': 'N/A',  # Пусто в Avito
+                        'Пассажирских лифтов': avito_data.get('passenger_elevator', 'N/A'),
+                        'Грузовых лифтов': avito_data.get('cargo_elevator', 'N/A'),
+                        'Парковка': avito_data.get('parking', 'N/A'),
+                        'Газоснабжение': avito_data.get('gas_supply', 'N/A'),  # Берем из "В доме"
+                        'Высота потолков': avito_data.get('ceiling_height', 'N/A'),
+                        'Мебель': avito_data.get('furniture', 'N/A'),
+                        'Способ продажи': avito_data.get('sale_type', 'N/A'),
+                        'Просмотров сегодня': avito_data.get('today_views', 'N/A'),
+                        'Адрес': avito_data.get('address', 'N/A'),
+                        'Минут метро': avito_data.get('metro_time', 'N/A'),
+                        'Метки': avito_data.get('tags', 'N/A'),
+                        'Статус': 'Активно',
+                        'Тип жилья': 'Квартира',
+                    }
+                    rows.append(excel_data)
+                else:
+                    print(f"❌ Не удалось спарсить объявление Avito: {url}")
+            else:
+                print(f"🏠 Парсим объявление Cian: {url}")
+                # Для Cian используем существующую логику
+                cian_data = parse_listing(url, sess)
+                rows.append(cian_data)
         except Exception as e:
             print(f"Ошибка при парсинге {url}: {e}")
 
@@ -901,9 +1382,9 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
         'Комнат', 'Цена', 'Общая площадь', 'Жилая площадь',
         'Площадь кухни', 'Санузел', 'Балкон/лоджия', 'Вид из окон',
         'Ремонт', 'Этаж', 'Год постройки', 'Строительная серия',
-        'Тип дома', 'Тип перекрытий', 'Количество лифтов', 'Парковка',
-        'Подъезды', 'Отопление', 'Аварийность', 'Газоснабжение',
-        'Всего просмотров', 'Просмотров сегодня', 'Уникальных просмотров',
+        'Тип дома', 'Тип перекрытий', 'Пассажирских лифтов', 'Грузовых лифтов',
+        'Парковка', 'Газоснабжение', 'Высота потолков', 'Мебель',
+        'Способ продажи', 'Просмотров сегодня',
         'Адрес', 'Минут метро', 'Метки', 'Статус', 'Тип жилья', 'URL'
     ]
     df = df[[c for c in ordered if c in df.columns]]
@@ -925,13 +1406,14 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
             cell.font = Font(bold=True)
 
         # Определяем колонку 'Цена' и задаем формат тысяч
-        price_idx = df.columns.get_loc('Цена') + 1
-        price_col = get_column_letter(price_idx)
-        custom_format = '#,##0'
-        for row in range(2, ws.max_row + 1):
-            cell = ws[f"{price_col}{row}"]
-            if isinstance(cell.value, (int, float)):
-                cell.number_format = custom_format
+        if 'Цена' in df.columns:
+            price_idx = df.columns.get_loc('Цена') + 1
+            price_col = get_column_letter(price_idx)
+            custom_format = '#,##0'
+            for row in range(2, ws.max_row + 1):
+                cell = ws[f"{price_col}{row}"]
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = custom_format
 
         wb.save(output_path)
 
@@ -1027,7 +1509,35 @@ def parse_listing(url: str, session: requests.Session) -> dict:
     return data
 
 def extract_urls(raw_input: str) -> tuple[list[str], int]:
+    """Извлекает URL из текста и определяет их источник"""
     urls = re.findall(r'https?://[^\s,;]+', raw_input)
+    
+    # Создаем экземпляр процессора для определения источника
+    processor = ListingsProcessor()
+    
+    # Анализируем источники
+    avito_count = 0
+    cian_count = 0
+    unknown_count = 0
+    
+    for url in urls:
+        if processor.is_avito_url(url):
+            avito_count += 1
+        elif processor.is_cian_url(url):
+            cian_count += 1
+        else:
+            unknown_count += 1
+    
+    # Выводим статистику по источникам
+    if avito_count > 0 or cian_count > 0:
+        print(f"🔍 Анализ ссылок:")
+        if avito_count > 0:
+            print(f"   🏠 Avito: {avito_count}")
+        if cian_count > 0:
+            print(f"   🏠 Cian: {cian_count}")
+        if unknown_count > 0:
+            print(f"   ⚠️ Неизвестные: {unknown_count}")
+    
     return urls, len(urls)
 
 # Создаем экземпляр класса для использования в других модулях

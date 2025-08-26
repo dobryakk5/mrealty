@@ -7,6 +7,7 @@
 - Возможность возобновления парсинга с любой страницы
 - Гибридный подход к парсингу карточек
 - Автоматическое определение metro.avito_id
+- Ограничение по дате объявлений (только свежие объявления)
 """
 
 import json  # Нужен для загрузки cookies
@@ -81,6 +82,14 @@ class EnhancedMetroParser:
             self.batch_cards_count = getattr(globals(), 'BATCH_CARDS_COUNT', 45)  # Остальные M карточек пачками
             self.batch_size = getattr(globals(), 'BATCH_SIZE', 10)  # Размер пакета для второй части
             
+            # НОВЫЙ ПАРАМЕТР для ограничения по дате
+            self.max_days = getattr(globals(), 'MAX_DAYS', 0)  # Максимальный возраст объявлений в днях
+            
+            # НОВЫЕ ПАРАМЕТРЫ для множественных метро
+            self.multiple_metro_ids = getattr(globals(), 'MULTIPLE_METRO_IDS', [])  # Список ID метро для парсинга одной ссылкой
+            self.multiple_metro_avito_ids = []  # Список avito_id для множественных метро
+            self.max_metro_per_link = getattr(globals(), 'MAX_METRO_PER_LINK', 10)  # Максимум метро в одной ссылке
+            
             print("✅ Конфигурация загружена из config_parser.py")
         else:
             self.max_cards = 15  # Количество карточек для парсинга (по умолчанию)
@@ -104,6 +113,14 @@ class EnhancedMetroParser:
             self.stream_cards_count = 5   # Первые 5 карточек потоково
             self.batch_cards_count = 45   # Остальные 45 карточек пачками
             self.batch_size = 10          # Размер пакета для второй части (по умолчанию: 10)
+            
+            # НОВЫЙ ПАРАМЕТР для ограничения по дате
+            self.max_days = 0  # Максимальный возраст объявлений в днях
+            
+            # НОВЫЕ ПАРАМЕТРЫ для множественных метро
+            self.multiple_metro_ids = []  # Список ID метро для парсинга одной ссылкой
+            self.multiple_metro_avito_ids = []  # Список avito_id для множественных метро
+            self.max_metro_per_link = 10  # Максимум метро в одной ссылке
         
         self.driver = None
         self.database_url = None
@@ -263,6 +280,64 @@ class EnhancedMetroParser:
                 
         except Exception as e:
             print(f"❌ Ошибка получения avito_id для метро: {e}")
+            return False
+    
+    async def get_multiple_metro_avito_ids(self, metro_ids):
+        """Получает avito_id для множественных метро из БД
+        
+        Args:
+            metro_ids (list): Список ID метро для парсинга
+            
+        Returns:
+            bool: True если все метро найдены, False в противном случае
+        """
+        try:
+            if not metro_ids or len(metro_ids) == 0:
+                print("❌ Список ID метро пуст")
+                return False
+            
+            if len(metro_ids) > self.max_metro_per_link:
+                print(f"⚠️ Количество метро ({len(metro_ids)}) превышает лимит ({self.max_metro_per_link})")
+                print(f"   Ограничиваем до {self.max_metro_per_link} метро")
+                metro_ids = metro_ids[:self.max_metro_per_link]
+            
+            conn = await asyncpg.connect(self.database_url)
+            
+            # Получаем avito_id для всех метро
+            placeholders = ','.join([f'${i+1}' for i in range(len(metro_ids))])
+            query = f"""
+                SELECT id, name, avito_id 
+                FROM metro 
+                WHERE id IN ({placeholders})
+                AND avito_id IS NOT NULL
+                ORDER BY id
+            """
+            
+            result = await conn.fetch(query, *metro_ids)
+            await conn.close()
+            
+            if result:
+                self.multiple_metro_ids = [row['id'] for row in result]
+                self.multiple_metro_avito_ids = [row['avito_id'] for row in result]
+                metro_names = [row['name'] for row in result]
+                
+                print(f"📍 Множественные метро ({len(result)}):")
+                for i, (metro_id, metro_name, avito_id) in enumerate(zip(self.multiple_metro_ids, metro_names, self.multiple_metro_avito_ids)):
+                    print(f"   {i+1}. {metro_name} (ID: {metro_id}, avito_id: {avito_id})")
+                
+                # Устанавливаем первое метро как основное для совместимости
+                if self.multiple_metro_ids:
+                    self.metro_id = self.multiple_metro_ids[0]
+                    self.metro_avito_id = self.multiple_metro_avito_ids[0]
+                    self.metro_name = metro_names[0]
+                
+                return True
+            else:
+                print(f"❌ Не найдено метро с ID {metro_ids} в БД")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Ошибка получения avito_id для множественных метро: {e}")
             return False
     
     def get_total_pages_count(self, page_content=None):
@@ -806,15 +881,25 @@ class EnhancedMetroParser:
             return False
     
     def get_metro_url(self):
-        """Получает URL для метро с правильным avito_id"""
-        if not self.metro_avito_id:
+        """Получает URL для метро с правильным avito_id
+        
+        Поддерживает как одиночные, так и множественные метро
+        """
+        if self.multiple_metro_avito_ids and len(self.multiple_metro_avito_ids) > 1:
+            # Генерируем URL для множественных метро
+            metro_param = '-'.join(map(str, self.multiple_metro_avito_ids))
+            base_url = "https://www.avito.ru/moskva/kvartiry/prodam/vtorichka-ASgBAgICAkSSA8YQ5geMUg"
+            metro_url = f"{base_url}?metro={metro_param}&footWalkingMetro=20"
+            print(f"🔗 Генерируем URL для {len(self.multiple_metro_avito_ids)} метро: {metro_param}")
+            return metro_url
+        elif self.metro_avito_id:
+            # Генерируем URL для одиночного метро (совместимость)
+            base_url = "https://www.avito.ru/moskva/kvartiry/prodam/vtorichka-ASgBAgICAkSSA8YQ5geMUg"
+            metro_url = f"{base_url}?metro={self.metro_avito_id}&footWalkingMetro=20"
+            return metro_url
+        else:
             print("❌ avito_id для метро не определен")
             return None
-            
-        # URL для вторички с правильным avito_id
-        base_url = "https://www.avito.ru/moskva/kvartiry/prodam/vtorichka-ASgBAgICAkSSA8YQ5geMUg"
-        metro_url = f"{base_url}?metro={self.metro_avito_id}&footWalkingMetro=20"
-        return metro_url
     
     def generate_search_context(self) -> str:
         """Генерирует простой context для каждого запроса
@@ -872,32 +957,59 @@ class EnhancedMetroParser:
         return url_path
     
     def get_metro_url_with_page(self, page=1):
-        """Получает URL для метро с пагинацией и context"""
-        if not self.metro_avito_id:
+        """Получает URL для метро с пагинацией и context
+        
+        Поддерживает как одиночные, так и множественные метро
+        """
+        if self.multiple_metro_avito_ids and len(self.multiple_metro_avito_ids) > 1:
+            # Генерируем URL для множественных метро
+            metro_param = '-'.join(map(str, self.multiple_metro_avito_ids))
+            base_url = "https://www.avito.ru/moskva/kvartiry/prodam/vtorichka-ASgBAgICAkSSA8YQ5geMUg"
+            metro_url = f"{base_url}?metro={metro_param}&s=104&footWalkingMetro=20"
+            
+            # Добавляем пагинацию (Avito использует параметр p)
+            if page > 1:
+                metro_url += f"&p={page}"
+            
+            # Генерируем новый context для каждой страницы
+            context = self.generate_search_context()
+            
+            # Проверяем контекст на дублирование перед добавлением в URL
+            if context and context.count('H4sIAAAAAAAA_') > 1:
+                print(f"[CONTEXT] ❌ ОШИБКА: Обнаружен дублированный gzip header в контексте!")
+                print(f"[CONTEXT] Используем fallback контекст для страницы {page}")
+                context = "H4sIAAAAAAAA_wEjANz_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
+            
+            metro_url += f"&context={context}"
+            
+            print(f"[CONTEXT] Страница {page}: context добавлен в URL для {len(self.multiple_metro_avito_ids)} метро")
+            return metro_url
+            
+        elif self.metro_avito_id:
+            # Генерируем URL для одиночного метро (совместимость)
+            base_url = "https://www.avito.ru/moskva/kvartiry/prodam/vtorichka-ASgBAgICAkSSA8YQ5geMUg"
+            metro_url = f"{base_url}?metro={self.metro_avito_id}&s=104&footWalkingMetro=20"
+            
+            # Добавляем пагинацию (Avito использует параметр p)
+            if page > 1:
+                metro_url += f"&p={page}"
+            
+            # Генерируем новый context для каждой страницы
+            context = self.generate_search_context()
+            
+            # Проверяем контекст на дублирование перед добавлением в URL
+            if context and context.count('H4sIAAAAAAAA_') > 1:
+                print(f"[CONTEXT] ❌ ОШИБКА: Обнаружен дублированный gzip header в контексте!")
+                print(f"[CONTEXT] Используем fallback контекст для страницы {page}")
+                context = "H4sIAAAAAAAA_wEjANz_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
+            
+            metro_url += f"&context={context}"
+            
+            print(f"[CONTEXT] Страница {page}: context добавлен в URL")
+            return metro_url
+        else:
             print("❌ avito_id для метро не определен")
             return None
-            
-        # URL для вторички с правильным avito_id и сортировкой
-        base_url = "https://www.avito.ru/moskva/kvartiry/prodam/vtorichka-ASgBAgICAkSSA8YQ5geMUg"
-        metro_url = f"{base_url}?metro={self.metro_avito_id}&s=104&footWalkingMetro=20"
-        
-        # Добавляем пагинацию (Avito использует параметр p)
-        if page > 1:
-            metro_url += f"&p={page}"
-        
-        # Генерируем новый context для каждой страницы
-        context = self.generate_search_context()
-        
-        # Проверяем контекст на дублирование перед добавлением в URL
-        if context and context.count('H4sIAAAAAAAA_') > 1:
-            print(f"[CONTEXT] ❌ ОШИБКА: Обнаружен дублированный gzip header в контексте!")
-            print(f"[CONTEXT] Используем fallback контекст для страницы {page}")
-            context = "H4sIAAAAAAAA_wEjANz_YToxOntzOjg6ImZyb21QYWdlIjtzOjc6ImNhdGFsb2ciO312FITcIwAAAA"
-        
-        metro_url += f"&context={context}"
-        
-        print(f"[CONTEXT] Страница {page}: context добавлен в URL (длина: {len(context)})")
-        return metro_url
     
     def wait_for_dom_stability(self, timeout=15):
         """Упрощенная версия: простая пауза + проверка на пустую страницу
@@ -3197,6 +3309,20 @@ class EnhancedMetroParser:
                 all_parsed_cards.extend(page_cards)
                 print(f"📄 Страница {page}: {len(page_cards)} карточек")
                 
+                # НОВАЯ ЛОГИКА: Проверка ограничения по дате
+                if self.max_days > 0 and len(page_cards) > 0:
+                    oldest_date = self.get_oldest_card_date(page_cards)
+                    if oldest_date:
+                        days_old = (datetime.now() - oldest_date).days
+                        print(f"⏰ Самое старое объявление на странице {page}: {days_old} дней назад")
+                        
+                        if days_old > self.max_days:
+                            print(f"⚠️ Обнаружено объявление старше {self.max_days} дней ({days_old} дней)")
+                            print(f"🔄 Завершаем парсинг метро - переходим к следующему")
+                            break
+                    else:
+                        print(f"⚠️ Не удалось определить дату объявлений на странице {page}")
+                
                 # Если страница пустая и это не первая страница, завершаем парсинг
                 if len(page_cards) == 0 and page > start_page:
                     print(f"⚠️ Страница {page} пустая - для данного метро больше нет объявлений")
@@ -3431,7 +3557,7 @@ class EnhancedMetroParser:
                 except:
                     pass
     
-    async def parse_single_metro(self, metro_id, max_pages, max_cards=None, start_page=1):
+    async def parse_single_metro(self, metro_id, max_pages, max_cards=None, start_page=1, max_days=0, multiple_metro_ids=None):
         """
         Парсит одно метро с заданными параметрами
         
@@ -3443,6 +3569,8 @@ class EnhancedMetroParser:
             max_pages (int): Количество страниц для парсинга
             max_cards (int, optional): Количество карточек на странице (0 = все карточки)
             start_page (int, optional): Номер страницы, с которой начать парсинг (по умолчанию 1)
+            max_days (int, optional): Максимальный возраст объявлений в днях (0 = все объявления)
+            multiple_metro_ids (list, optional): Список ID метро для парсинга одной ссылкой
         
         Returns:
             tuple: (success: bool, saved_count: int, total_cards: int)
@@ -3456,15 +3584,34 @@ class EnhancedMetroParser:
             self.max_pages = max_pages
             if max_cards is not None:
                 self.max_cards = max_cards
+            if max_days > 0:
+                self.max_days = max_days
+                print(f"⏰ Ограничение по дате: только объявления за последние {max_days} дней")
             
             print(f"🚀 Запуск парсинга метро ID={metro_id}, страниц={max_pages}, карточек на странице={self.max_cards}")
             if start_page > 1:
                 print(f"🚀 Начинаем с страницы {start_page}")
             
-            # Получаем avito_id для метро
-            if not await self.get_metro_avito_id():
-                print(f"❌ Не удалось получить avito_id для метро {metro_id}")
-                return False, 0, 0
+            # Устанавливаем параметры для этого запуска
+            self.metro_id = metro_id
+            self.max_pages = max_pages
+            if max_cards is not None:
+                self.max_cards = max_cards
+            if max_days > 0:
+                self.max_days = max_days
+                print(f"⏰ Ограничение по дате: только объявления за последние {max_days} дней")
+            
+            # НОВАЯ ЛОГИКА: Проверяем множественные метро
+            if multiple_metro_ids and len(multiple_metro_ids) > 1:
+                print(f"🚀 Парсинг множественных метро: {len(multiple_metro_ids)} метро одной ссылкой")
+                if not await self.get_multiple_metro_avito_ids(multiple_metro_ids):
+                    print(f"❌ Не удалось получить avito_id для множественных метро")
+                    return False, 0, 0
+            else:
+                # Получаем avito_id для одиночного метро
+                if not await self.get_metro_avito_id():
+                    print(f"❌ Не удалось получить avito_id для метро {metro_id}")
+                    return False, 0, 0
             
             # Загружаем словарь тегов из БД
             if not self.tags_dictionary:
@@ -3654,6 +3801,107 @@ class EnhancedMetroParser:
     def __del__(self):
         """Деструктор для автоматической очистки при удалении объекта"""
         self.cleanup()
+    
+    def get_oldest_card_date(self, cards):
+        """Определяет самую старую дату среди карточек на странице
+        
+        Args:
+            cards (list): Список карточек с данными
+            
+        Returns:
+            datetime: Самая старая дата или None, если не удалось определить
+        """
+        try:
+            oldest_date = None
+            
+            for card in cards:
+                if not card:
+                    continue
+                
+                # Пытаемся получить дату из разных полей
+                card_date = None
+                
+                # 1. Пробуем поле creation_time
+                if 'creation_time' in card and card['creation_time']:
+                    card_date = self.parse_card_date(card['creation_time'])
+                
+                # 2. Пробуем поле published_time
+                if not card_date and 'published_time' in card and card['published_time']:
+                    card_date = self.parse_card_date(card['published_time'])
+                
+                # 3. Пробуем поле seller_info.creation_time
+                if not card_date and 'seller_info' in card and card['seller_info']:
+                    seller_info = card['seller_info']
+                    if 'creation_time' in seller_info and seller_info['creation_time']:
+                        card_date = self.parse_card_date(seller_info['creation_time'])
+                
+                # Если нашли дату, сравниваем с самой старой
+                if card_date:
+                    # Приводим к datetime для корректного сравнения
+                    if hasattr(card_date, 'date'):
+                        # Если это datetime, берем только дату
+                        card_date = card_date.date()
+                    
+                    if oldest_date is None or card_date < oldest_date:
+                        oldest_date = card_date
+            
+            return oldest_date
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка определения самой старой даты: {e}")
+            return None
+    
+    def parse_card_date(self, date_text):
+        """Парсит дату из текста карточки
+        
+        Args:
+            date_text (str): Текст с датой
+            
+        Returns:
+            datetime: Объект даты или None, если не удалось распарсить
+        """
+        try:
+            if not date_text:
+                return None
+            
+            # Используем существующую функцию для относительного времени
+            parsed_date = self.convert_relative_time_to_date(date_text)
+            if parsed_date:
+                return parsed_date
+            
+            # Если это конкретная дата (например, "12 июля 13:35")
+            month_names = {
+                'января': 1, 'февраля': 2, 'марта': 3, 'апреля': 4,
+                'мая': 5, 'июня': 6, 'июля': 7, 'августа': 8,
+                'сентября': 9, 'октября': 10, 'ноября': 11, 'декабря': 12
+            }
+            
+            # Ищем формат "12 июля" или "12 июля 13:35"
+            for month_name, month_num in month_names.items():
+                if month_name in date_text.lower():
+                    # Ищем день перед названием месяца
+                    day_match = re.search(r'(\d{1,2})\s+' + month_name, date_text.lower())
+                    if day_match:
+                        day = int(day_match.group(1))
+                        current_year = datetime.now().year
+                        
+                        # Создаем дату
+                        try:
+                            card_date = datetime(current_year, month_num, day)
+                            
+                            # Если дата в будущем, значит это прошлый год
+                            if card_date > datetime.now():
+                                card_date = datetime(current_year - 1, month_num, day)
+                            
+                            return card_date
+                        except ValueError:
+                            continue
+            
+            return None
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка парсинга даты '{date_text}': {e}")
+            return None
 
 async def main():
     # Регистрируем обработчики сигналов
