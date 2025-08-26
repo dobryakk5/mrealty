@@ -50,6 +50,7 @@
 - Рекомендуемый размер пачки: 5-10 метро
 - Значительно ускоряет массовый парсинг (экономия 60-80% времени)
 - Совместим со всеми параметрами парсинга
+- ✅ ПОДДЕРЖКА ВОЗОБНОВЛЕНИЯ: Автоматически продолжает с места остановки
 
 Опции:
   --metro-ids 1,2,3     Список конкретных metro.id через запятую
@@ -78,6 +79,7 @@
   python parse_avito_to_db.py --all --batch-size 5    # Все метро группами по 5 (80 пачек)
   python parse_avito_to_db.py --all --batch-size 10   # Все метро группами по 10 (40 пачек)
   python parse_avito_to_db.py --all --batch-size 5 --max-days 7  # Все метро по 5, только свежие
+  python parse_avito_to_db.py --all --batch-size 5 --start-page 3  # Все метро по 5, первая пачка с 3-й страницы
 """
 
 import asyncio
@@ -671,7 +673,7 @@ class MetroBatchParser:
         
         return batches
     
-    async def parse_metro_batches(self, metro_batches, max_pages, max_cards, start_page, max_days):
+    async def parse_metro_batches(self, metro_batches, max_pages, max_cards, start_page, max_days, use_progress_tracking):
         """
         Парсит пачки метро
         
@@ -681,6 +683,7 @@ class MetroBatchParser:
             max_cards (int): Максимальное количество карточек на странице
             start_page (int): Номер страницы, с которой начать парсинг
             max_days (int): Максимальный возраст объявлений в днях
+            use_progress_tracking (bool): Флаг включения отслеживания прогресса
         
         Returns:
             bool: True если все пачки обработаны успешно
@@ -693,6 +696,23 @@ class MetroBatchParser:
         successful_batches = 0
         failed_batches = 0
         
+        # Инициализация системы отслеживания прогресса для батчей
+        session_id = None
+        if use_progress_tracking:
+            print("🔄 Инициализация отслеживания прогресса для батчей...")
+            
+            # Проверяем, есть ли незавершенная сессия для AVITO
+            progress = await get_last_parsing_progress(1, None, AVITO_SOURCE)
+            
+            if progress and progress['status'] == 'active':
+                print(f"🔄 Продолжаем сессию батчей {progress['id']}")
+                session_id = progress['id']
+            else:
+                # Создаем новую сессию для батчей
+                total_metros = sum(len(batch) for batch in metro_batches)
+                session_id = await create_parsing_session(1, None, total_metros, AVITO_SOURCE)
+                print(f"🆕 Создана новая сессия батчей: ID={session_id}")
+        
         print(f"\n🚀 Начинаем парсинг {total_batches} пачек метро")
         print(f"📄 Максимум страниц: {max_pages if max_pages > 0 else 'все'}")
         print(f"📊 Максимум карточек: {max_cards if max_cards and max_cards > 0 else 'все'}")
@@ -700,7 +720,12 @@ class MetroBatchParser:
             print(f"⏰ Максимум дней: {max_days} (только свежие объявления)")
         if start_page > 1:
             print(f"🚀 Начинаем с страницы: {start_page} (только для первой пачки)")
+        if use_progress_tracking:
+            print(f"🔄 Отслеживание прогресса: {'включено' if session_id else 'выключено'}")
         print("=" * 60)
+        
+        # Счетчик обработанных метро для отслеживания прогресса
+        total_metros_processed = 0
         
         for i, metro_batch in enumerate(metro_batches):
             print(f"\n📍 Пачка {i+1}/{total_batches}: {len(metro_batch)} метро")
@@ -728,6 +753,13 @@ class MetroBatchParser:
             if success:
                 successful_batches += 1
                 print(f"✅ Пачка {i+1} обработана успешно")
+                
+                # Обновляем прогресс для каждого метро в пачке
+                if use_progress_tracking and session_id:
+                    for metro in metro_batch:
+                        total_metros_processed += 1
+                        await update_parsing_progress(session_id, metro['id'], total_metros_processed)
+                    print(f"📊 Прогресс обновлен: {total_metros_processed} метро обработано")
             else:
                 failed_batches += 1
                 print(f"❌ Пачка {i+1} обработана с ошибками")
@@ -736,6 +768,11 @@ class MetroBatchParser:
             if i < total_batches - 1:
                 print(f"⏳ Пауза 3 секунды перед следующей пачкой...")
                 await asyncio.sleep(3)
+        
+        # Завершаем сессию если использовали отслеживание прогресса
+        if use_progress_tracking and session_id:
+            await complete_parsing_session(session_id)
+            print(f"✅ Сессия батчей {session_id} завершена")
         
         # Итоговая статистика по пачкам
         print(f"\n📊 ИТОГОВАЯ СТАТИСТИКА ПО ПАЧКАМ:")
@@ -748,6 +785,49 @@ class MetroBatchParser:
             print(f"   • Процент успеха: {success_rate:.1f}%")
         
         return failed_batches == 0
+
+    async def get_resume_batch_index(self, metro_batches, progress, start_page):
+        """
+        Определяет, с какой пачки нужно продолжить парсинг, если сессия активна.
+        
+        Args:
+            metro_batches (list): Список пачек метро
+            progress (dict): Прогресс парсинга из БД
+            start_page (int): Начальная страница для парсинга
+        
+        Returns:
+            int: Индекс пачки, с которой нужно продолжить парсинг, или -1, если не нужно продолжать.
+        """
+        current_batch_index = -1
+        expected_metro_id = progress['current_metro_id']
+        
+        for i, batch in enumerate(metro_batches):
+            for metro in batch:
+                if metro['id'] == expected_metro_id:
+                    current_batch_index = i
+                    break
+            if current_batch_index != -1:
+                break
+        
+        if current_batch_index == -1:
+            # Если метро не найдено в текущих пачках, значит, оно уже обработано
+            print(f"✅ Все метро после ID {expected_metro_id} с avito_id и is_msk уже обработаны")
+            return -1
+        
+        # Проверяем, можно ли продолжить с текущего метро
+        current_metro_can_continue = False
+        for metro in metro_batches[current_batch_index]:
+            if metro['id'] == expected_metro_id:
+                if metro['avito_id'] and metro.get('is_msk') is not False:
+                    current_metro_can_continue = True
+                break
+        
+        if current_metro_can_continue:
+            # Если можно продолжить, возвращаем индекс пачки
+            return current_batch_index
+        else:
+            # Если нельзя продолжить, возвращаем -1, чтобы создать новую сессию
+            return -1
 
 async def main():
     """Основная функция"""
@@ -881,11 +961,12 @@ async def main():
             estimated_batches = (len(metro_list) + args.batch_size - 1) // args.batch_size
             print(f"   • Ожидаемое количество пачек: ~{estimated_batches}")
             print(f"   • Экономия времени: ~60-80% по сравнению с парсингом по одному метро")
+            print(f"   • ✅ Поддержка возобновления: автоматически продолжает с места остановки")
         print("=" * 60)
         
         # Запускаем парсинг
-        # Используем отслеживание прогресса только для парсинга всех метро (--all)
-        use_progress_tracking = args.all
+        # Используем отслеживание прогресса для парсинга всех метро (--all) И для батчей
+        use_progress_tracking = args.all or args.batch_size > 0
         
         # НОВАЯ ЛОГИКА: Определяем режим парсинга
         if args.batch_size > 0:
@@ -893,12 +974,40 @@ async def main():
             print(f"📦 Автоматическая группировка метро в пачки по {args.batch_size}")
             metro_batches = batch_parser.create_metro_batches(metro_list, args.batch_size)
             
+            # Проверяем прогресс предыдущего запуска для батчей
+            if use_progress_tracking:
+                print(f"🔄 Проверяем прогресс предыдущего запуска батчей...")
+                progress = await get_last_parsing_progress(1, None, AVITO_SOURCE)
+                
+                if progress and progress['status'] == 'active':
+                    print(f"🔍 Найдена активная сессия батчей: ID={progress['id']}")
+                    print(f"   • Обработано метро: {progress['processed_metros']}")
+                    print(f"   • Текущее метро ID: {progress['current_metro_id']}")
+                    print(f"   • Всего метро в сессии: {progress['total_metros']}")
+                    
+                    # Определяем, с какой пачки продолжить
+                    current_batch_index = await batch_parser.get_resume_batch_index(
+                        metro_batches, progress, args.start_page
+                    )
+                    
+                    if current_batch_index > 0:
+                        print(f"🔄 Продолжаем с пачки {current_batch_index + 1}/{len(metro_batches)}")
+                        metro_batches = metro_batches[current_batch_index:]
+                        # Обновляем start_page для первой пачки
+                        if current_batch_index > 0:
+                            args.start_page = 1  # Сбрасываем start_page для продолжения
+                    else:
+                        print(f"🆕 Начинаем с первой пачки")
+                else:
+                    print(f"🆕 Создаем новую сессию парсинга батчей")
+            
             success = await batch_parser.parse_metro_batches(
                 metro_batches,
                 args.max_pages, 
                 args.max_cards,
                 args.start_page,
-                args.max_days
+                args.max_days,
+                use_progress_tracking  # Передаем флаг отслеживания прогресса
             )
             
         elif args.multiple_metro and multiple_metro_ids:

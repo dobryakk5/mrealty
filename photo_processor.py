@@ -184,7 +184,6 @@ class PhotoProcessor:
             for font_path in font_paths:
                 try:
                     font = ImageFont.truetype(font_path, font_size)
-                    print(f"✅ Используется шрифт: {font_path}")
                     break
                 except:
                     continue

@@ -143,7 +143,11 @@ class EnhancedMetroParser:
             self.enable_db_save = False
     
     def convert_relative_time_to_date(self, relative_time):
-        """Преобразует относительное время в дату"""
+        """Преобразует относительное время в datetime.datetime
+        
+        Всегда возвращает datetime.datetime для единообразия.
+        Если время не указано, устанавливается полдень (12:00).
+        """
         try:
             if not relative_time:
                 return None
@@ -153,16 +157,13 @@ class EnhancedMetroParser:
             
             # Паттерны для относительного времени
             if 'сегодня' in relative_time_lower:
-                result = now  # Возвращаем полный datetime для сегодня
-                return result
+                return now  # Возвращаем полный datetime для сегодня
             elif 'вчера' in relative_time_lower:
                 yesterday = now - timedelta(days=1)
-                result = yesterday  # Возвращаем полный datetime для вчера
-                return result
+                return yesterday  # Возвращаем полный datetime для вчера
             elif 'позавчера' in relative_time_lower:
                 day_before_yesterday = now - timedelta(days=2)
-                result = day_before_yesterday  # Возвращаем полный datetime для позавчера
-                return result
+                return day_before_yesterday  # Возвращаем полный datetime для позавчера
             
             # Паттерны с количеством времени
             time_patterns = [
@@ -179,8 +180,7 @@ class EnhancedMetroParser:
                     
                     if unit == 'hours':
                         target_time = now - timedelta(hours=count)
-                        result = target_time  # Возвращаем полный datetime для часов
-                        return result
+                        return target_time  # Возвращаем полный datetime для часов
                     elif unit == 'days':
                         target_time = now - timedelta(days=count)
                     elif unit == 'weeks':
@@ -189,8 +189,9 @@ class EnhancedMetroParser:
                         # Приблизительно, месяц = 30 дней
                         target_time = now - timedelta(days=count * 30)
                     
-                    result = target_time.date()
-                    return result
+                    # Для дней/недель/месяцев устанавливаем полдень (12:00)
+                    target_date = target_time.date()
+                    return datetime.combine(target_date, datetime.min.time().replace(hour=12))
             
             # Если это конкретная дата (например, "12 июля 13:35")
             month_names = {
@@ -199,23 +200,37 @@ class EnhancedMetroParser:
                 'сентября': 9, 'октября': 10, 'ноября': 11, 'декабря': 12
             }
             
-            # Ищем формат "12 июля"
+            # Ищем формат "12 июля" или "12 июля 13:35"
             for month_name, month_num in month_names.items():
                 if month_name in relative_time_lower:
                     # Ищем день перед названием месяца
                     day_match = re.search(r'(\d{1,2})\s+' + month_name, relative_time_lower)
                     if day_match:
                         day = int(day_match.group(1))
-                        # Предполагаем текущий год
-                        year = now.year
+                        current_year = now.year
                         
-                        # ЛОГИКА ГОДА: если месяц уже прошел в этом году, то это прошлый год
-                        # Например: сейчас август 2025, парсится "12 июля" → это июль 2025 (текущий год)
-                        # Если парсится "12 января" → это январь 2025 (текущий год)
-                        # НЕ добавляем год, так как объявления обычно не публикуются на год вперед
+                        # Проверяем, есть ли время в строке
+                        time_match = re.search(r'(\d{1,2}):(\d{1,2})', relative_time_lower)
+                        if time_match:
+                            # Есть время - используем его
+                            hour = int(time_match.group(1))
+                            minute = int(time_match.group(2))
+                        else:
+                            # Время не указано - устанавливаем полдень (12:00)
+                            hour = 12
+                            minute = 0
                         
-                        result = datetime(year, month_num, day).date()
-                        return result
+                        # Создаем datetime
+                        try:
+                            card_datetime = datetime(current_year, month_num, day, hour, minute)
+                            
+                            # Если дата в будущем, значит это прошлый год
+                            if card_datetime > now:
+                                card_datetime = datetime(current_year - 1, month_num, day, hour, minute)
+                            
+                            return card_datetime
+                        except ValueError:
+                            continue
             
             # Ищем формат "12.07" или "12.07.2024"
             date_dot_patterns = [
@@ -226,34 +241,36 @@ class EnhancedMetroParser:
             for pattern in date_dot_patterns:
                 match = re.search(pattern, relative_time_lower)
                 if match:
-                    if len(match.groups()) == 2:
+                    if len(match.groups()) == 3:
+                        # Формат "12.07.2024"
+                        day = int(match.group(1))
+                        month = int(match.group(2))
+                        year = int(match.group(3))
+                    else:
                         # Формат "12.07"
                         day = int(match.group(1))
                         month = int(match.group(2))
                         year = now.year
                         
-                        # ЛОГИКА ГОДА: если месяц уже прошел в этом году, то это текущий год
-                        # Например: сейчас август 2025, парсится "12.07" → это июль 2025 (текущий год)
-                        # НЕ добавляем год, так как объявления обычно не публикуются на год вперед
-                        
-                        result = datetime(year, month, day).date()
-                        return result
+                        # Если месяц уже прошел в этом году, значит это текущий год
+                        if month < now.month:
+                            year = now.year
+                        else:
+                            year = now.year - 1
                     
-                    elif len(match.groups()) == 3:
-                        # Формат "12.07.2024"
-                        day = int(match.group(1))
-                        month = int(match.group(2))
-                        year = int(match.group(3))
-                        result = datetime(year, month, day).date()
-                        print(f"✅ Формат DD.MM.YYYY -> {result}")
+                    # Устанавливаем полдень (12:00) для дат без времени
+                    try:
+                        result = datetime(year, month, day, 12, 0)
                         return result
+                    except ValueError:
+                        continue
             
-            print(f"⚠️ Не удалось распарсить время: '{relative_time}', возвращаем текущий datetime")
-            return datetime.now()
+            # Если ничего не распарсили, возвращаем None
+            return None
             
         except Exception as e:
-            print(f"❌ Ошибка преобразования времени в дату '{relative_time}': {e}, возвращаем текущий datetime")
-            return datetime.now()
+            print(f"⚠️ Ошибка парсинга относительного времени '{relative_time}': {e}")
+            return None
     
     async def get_metro_avito_id(self):
         """Получает avito_id для метро из БД"""
@@ -3192,6 +3209,7 @@ class EnhancedMetroParser:
                 if self.max_days > 0 and len(page_cards) > 0:
                     oldest_date = self.get_oldest_card_date(page_cards)
                     if oldest_date:
+                        # Теперь oldest_date всегда datetime.datetime
                         days_old = (datetime.now() - oldest_date).days
                         print(f"⏰ Самое старое объявление на странице {page}: {days_old} дней назад")
                         
@@ -3688,7 +3706,7 @@ class EnhancedMetroParser:
             cards (list): Список карточек с данными
             
         Returns:
-            datetime: Самая старая дата или None, если не удалось определить
+            datetime: Самая старая дата как datetime.datetime или None, если не удалось определить
         """
         try:
             oldest_date = None
@@ -3716,11 +3734,7 @@ class EnhancedMetroParser:
                 
                 # Если нашли дату, сравниваем с самой старой
                 if card_date:
-                    # Приводим к datetime для корректного сравнения
-                    if hasattr(card_date, 'date'):
-                        # Если это datetime, берем только дату
-                        card_date = card_date.date()
-                    
+                    # Теперь card_date всегда datetime.datetime
                     if oldest_date is None or card_date < oldest_date:
                         oldest_date = card_date
             
@@ -3737,7 +3751,7 @@ class EnhancedMetroParser:
             date_text (str): Текст с датой
             
         Returns:
-            datetime: Объект даты или None, если не удалось распарсить
+            datetime: Объект datetime.datetime или None, если не удалось распарсить
         """
         try:
             if not date_text:
@@ -3764,15 +3778,26 @@ class EnhancedMetroParser:
                         day = int(day_match.group(1))
                         current_year = datetime.now().year
                         
-                        # Создаем дату
+                        # Проверяем, есть ли время в строке
+                        time_match = re.search(r'(\d{1,2}):(\d{1,2})', date_text.lower())
+                        if time_match:
+                            # Есть время - используем его
+                            hour = int(time_match.group(1))
+                            minute = int(time_match.group(2))
+                        else:
+                            # Время не указано - устанавливаем полдень (12:00)
+                            hour = 12
+                            minute = 0
+                        
+                        # Создаем datetime
                         try:
-                            card_date = datetime(current_year, month_num, day)
+                            card_datetime = datetime(current_year, month_num, day, hour, minute)
                             
                             # Если дата в будущем, значит это прошлый год
-                            if card_date > datetime.now():
-                                card_date = datetime(current_year - 1, month_num, day)
+                            if card_datetime > datetime.now():
+                                card_datetime = datetime(current_year - 1, month_num, day, hour, minute)
                             
-                            return card_date
+                            return card_datetime
                         except ValueError:
                             continue
             

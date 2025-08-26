@@ -532,9 +532,13 @@ class ListingsProcessor:
                     padding: 20px; 
                     border-radius: 10px; 
                     box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                }}
+                
+                .listing-header {{
                     display: flex;
                     gap: 30px;
                     align-items: flex-start;
+                    margin-bottom: 20px;
                 }}
                 
                 .listing-info {{
@@ -542,9 +546,13 @@ class ListingsProcessor:
                     min-width: 0;
                 }}
                 
-                .listing-photos {{
+                .listing-main-photo {{
                     flex: 1;
                     min-width: 0;
+                }}
+                
+                .listing-photos {{
+                    width: 100%;
                 }}
                 .listing h3 {{ 
                     color: #333; 
@@ -764,14 +772,19 @@ class ListingsProcessor:
                     .listing {{ 
                         padding: 15px; 
                         margin: 15px 0; 
-                        flex-direction: column;
-                        gap: 20px;
                         width: 100%;
                         box-sizing: border-box;
                     }}
-                    .listing-info, .listing-photos {{
+                    .listing-header {{
+                        flex-direction: column;
+                        gap: 20px;
+                    }}
+                    .listing-info, .listing-main-photo {{
                         width: 100%;
                         min-width: 100%;
+                    }}
+                    .listing-photos {{
+                        width: 100%;
                     }}
                     .photo-grid {{ 
                         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); 
@@ -875,9 +888,14 @@ class ListingsProcessor:
                     if not listing_data:
                         html_content += f"""
                         <div class="listing">
-                            <div class="listing-info">
-                                <h3>Вариант #{i}</h3>
-                                <p>Ошибка при парсинге Avito</p>
+                            <div class="listing-header">
+                                <div class="listing-info">
+                                    <h3>Вариант #{i}</h3>
+                                    <p>Ошибка при парсинге Avito</p>
+                                </div>
+                                <div class="listing-main-photo">
+                                    <p>📷 Фотографии недоступны</p>
+                                </div>
                             </div>
                             <div class="listing-photos">
                                 <p>📷 Фотографии недоступны</p>
@@ -946,8 +964,9 @@ class ListingsProcessor:
                 
                 html_content += f"""
                 <div class="listing">
-                    <div class="listing-info">
-                        <h3>Вариант #{i}</h3>
+                    <div class="listing-header">
+                        <div class="listing-info">
+                            <h3>Вариант #{i}</h3>
                 """
                 
                 # Добавляем комментарий к объявлению, если есть
@@ -955,12 +974,18 @@ class ListingsProcessor:
                     html_content += f'<p class="listing-comment">{listing_comments[i-1]}</p>'
                 
                 html_content += f"""
-                        <p><strong>Комнат:</strong> {listing_info.get('rooms', 'N/A')}</p>
-                        <p><strong>Цена:</strong> {listing_info.get('price', 'N/A')}</p>
-                        <p><strong>Этаж:</strong> {listing_info.get('floor', 'N/A')}</p>
-                        <p><strong>Общая площадь:</strong> {listing_info.get('total_area', 'N/A')} м²</p>
-                        <p><strong>Кухня:</strong> {listing_info.get('kitchen_area', 'N/A')} м²</p>
-
+                            <p><strong>Комнат:</strong> {listing_info.get('rooms', 'N/A')}</p>
+                            <p><strong>Цена:</strong> {listing_info.get('price', 'N/A')}</p>
+                            <p><strong>Этаж:</strong> {listing_info.get('floor', 'N/A')}</p>
+                            <p><strong>Общая площадь:</strong> {listing_info.get('total_area', 'N/A')} м²</p>
+                            <p><strong>Кухня:</strong> {listing_info.get('kitchen_area', 'N/A')} м²</p>
+                        </div>
+                        
+                        <div class="listing-main-photo">
+                """
+                
+                html_content += f"""
+                        </div>
                     </div>
                     
                     <div class="listing-photos">
@@ -1030,9 +1055,14 @@ class ListingsProcessor:
                 
                 html_content += f"""
                 <div class="listing">
-                    <div class="listing-info">
-                        <h3>Вариант #{i}</h3>
-                        <p>Ошибка при обработке: {str(e)}</p>
+                    <div class="listing-header">
+                        <div class="listing-info">
+                            <h3>Вариант #{i}</h3>
+                            <p>Ошибка при обработке: {str(e)}</p>
+                        </div>
+                        <div class="listing-main-photo">
+                            <p>📷 Фотографии недоступны</p>
+                        </div>
                     </div>
                     <div class="listing-photos">
                         <p>📷 Фотографии недоступны</p>
