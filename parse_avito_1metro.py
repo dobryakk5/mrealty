@@ -520,8 +520,6 @@ class EnhancedMetroParser:
             if hasattr(self, 'headless_mode') and self.headless_mode:
                 options.add_argument("--headless")
                 # print("🔒 Браузер запущен в headless режиме")  # Убрано из лога
-            else:
-                # print("🖥️ Браузер запущен с интерфейсом")  # Убрано из лога
             
             # User-Agent
             options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")

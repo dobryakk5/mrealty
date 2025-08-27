@@ -517,6 +517,9 @@ class ListingsProcessor:
             </div>
             
             <script>
+                // Проверяем загрузку скрипта и элементов
+                console.log('Скрипт загружен');
+                
                 // Глобальные переменные для навигации по фотографиям
                 let currentPhotos = [];
                 let currentPhotoIndex = 0;
@@ -1036,15 +1039,24 @@ class ListingsProcessor:
                 
                 // Функция открытия модального окна
                 function openModal(imageSrc, caption, photos, photoIndex, listingIndex) {{
+                    console.log('openModal вызвана с параметрами:', imageSrc, caption, photos, photoIndex, listingIndex);
+                    
                     currentPhotos = photos || [];
                     currentPhotoIndex = photoIndex || 0;
                     currentListingIndex = listingIndex || 0;
+                    
+                    console.log('Элементы модального окна:', {
+                        modal: document.getElementById('photoModal'),
+                        image: document.getElementById('modalImage'),
+                        caption: document.getElementById('modalCaption')
+                    });
                     
                     document.getElementById('photoModal').style.display = 'block';
                     document.getElementById('modalImage').src = imageSrc;
                     document.getElementById('modalCaption').innerHTML = caption;
                     
                     updateModalNavigation();
+                    console.log('Модальное окно должно быть открыто');
                 }}
                 
                 // Функция закрытия модального окна
@@ -1115,6 +1127,17 @@ class ListingsProcessor:
                     }} else if (event.key === 'ArrowRight') {{
                         showNextPhoto();
                     }}
+                }});
+                
+                // Проверяем элементы после загрузки страницы
+                document.addEventListener('DOMContentLoaded', function() {{
+                    console.log('DOM загружен, проверяем элементы:');
+                    console.log('Модальное окно:', document.getElementById('photoModal'));
+                    console.log('Кнопка prev:', document.getElementById('prevBtn'));
+                    console.log('Кнопка next:', document.getElementById('nextBtn'));
+                    console.log('Изображение:', document.getElementById('modalImage'));
+                    console.log('Подпись:', document.getElementById('modalCaption'));
+                    console.log('Счетчик:', document.getElementById('modalCounter'));
                 }});
             </script>
         """
