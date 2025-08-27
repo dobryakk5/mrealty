@@ -1826,8 +1826,11 @@ class EnhancedMetroParser:
             else:
                 db_data['walk_minutes'] = None
             
-            # Адрес
-            db_data['address'] = card_data.get('street_house', '')
+            # Адрес - берем полный адрес из card_data['address'] или street_house
+            address = card_data.get('address', '')
+            if not address or address == "Не найдено":
+                address = card_data.get('street_house', '')
+            db_data['address'] = address
             
             # Теги - парсим из характеристик карточки
             tags = card_data.get('tags', [])
@@ -1952,6 +1955,8 @@ class EnhancedMetroParser:
             
             # Ищем теги - они идут отдельными строками после цены "за м²"
             found_price_line = False
+            found_metro_line = False
+            tag_lines = []
             
             for i, line in enumerate(lines):
                 line = line.strip()
@@ -1964,8 +1969,13 @@ class EnhancedMetroParser:
                     continue
                 
                 # После строки с ценой ищем теги в следующих строках
-                if found_price_line:
-                    # Проверяем, является ли текущая строка тегом
+                if found_price_line and not found_metro_line:
+                    # Проверяем, является ли текущая строка адресом (содержит метро)
+                    if self.is_metro_line(line):
+                        found_metro_line = True
+                        break
+                    
+                    # Если это не адрес, проверяем, является ли строкой тегом
                     is_known_tag = False
                     for known in known_tags:
                         if known.lower() == line.lower():
@@ -1973,11 +1983,13 @@ class EnhancedMetroParser:
                             is_known_tag = True
                             break
                     
-                    # Если строка не является тегом, проверяем не адрес ли это
+                    # Если строка не является известным тегом, но может быть тегом
                     if not is_known_tag:
-                        # Если это адрес или описание, прекращаем поиск тегов
-                        if self.is_address_line(line) or len(line) > 50:
-                            break
+                        # Проверяем, что это не пустая строка и не слишком длинная
+                        if line and len(line) < 50:
+                            # Добавляем как потенциальный тег
+                            tag_lines.append(line)
+                            tags.append(line)
             
             # Извлекаем информацию о продавце из последних строк
             for i in range(len(lines) - 1, -1, -1):
@@ -2033,17 +2045,13 @@ class EnhancedMetroParser:
             print(f"❌ Ошибка парсинга тегов: {e}")
             return [], {}
     
-    def is_address_line(self, line):
-        """Проверяет, является ли строка адресом"""
+    def is_metro_line(self, line):
+        """Проверяет, является ли строка строкой с метро (адресом)"""
         try:
             line_lower = line.lower()
             
-            # Признаки адреса:
-            # 1. Содержит названия улиц
-            street_indicators = ['ул.', 'улица', 'проспект', 'пр.', 'переулок', 'пер.', 
-                               'площадь', 'пл.', 'бульвар', 'б-р', 'шоссе', 'ш.']
-            
-            # 2. Содержит названия метро (известные станции)
+            # Признаки строки с метро:
+            # 1. Содержит названия метро (известные станции)
             metro_stations = ['юго-западная', 'красносельская', 'международная', 'красные ворота',
                             'чкаловская', 'таганская', 'марксистская', 'площадь ильича',
                             'римская', 'крестьянская застава', 'пролетарская', 'волгоградский проспект',
@@ -2052,18 +2060,22 @@ class EnhancedMetroParser:
                             'площадь ильича', 'марксистская', 'таганская', 'волгоградский проспект',
                             'пролетарская', 'крестьянская застава', 'римская', 'текстильщики',
                             'кузьминки', 'рязанский проспект', 'выхино', 'новогиреево',
-                            'перово', 'шоссе энтузиастов', 'авиамоторная']
+                            'перово', 'шоссе энтузиастов', 'авиамоторная', 'арбатская']
             
-            # 3. Содержит время до метро
+            # 2. Содержит время до метро
             time_pattern = r'\d+\s*мин'
             
+            # 3. Содержит названия улиц
+            street_indicators = ['ул.', 'улица', 'проспект', 'пр.', 'переулок', 'пер.', 
+                               'площадь', 'пл.', 'бульвар', 'б-р', 'шоссе', 'ш.']
+            
             # Проверяем признаки адреса
-            has_street = any(indicator in line_lower for indicator in street_indicators)
             has_metro = any(station in line_lower for station in metro_stations)
             has_time = bool(re.search(time_pattern, line_lower))
+            has_street = any(indicator in line_lower for indicator in street_indicators)
             
             # Если есть хотя бы 2 признака адреса, считаем строку адресом
-            address_indicators = sum([has_street, has_metro, has_time])
+            address_indicators = sum([has_metro, has_time, has_street])
             
             if address_indicators >= 2:
                 return True
@@ -2081,7 +2093,7 @@ class EnhancedMetroParser:
             return False
             
         except Exception as e:
-            print(f"⚠️ Ошибка проверки адреса: {e}")
+            print(f"⚠️ Ошибка проверки строки с метро: {e}")
             return False
     
     def extract_seller_info_from_params(self, params_text):
@@ -2200,7 +2212,7 @@ class EnhancedMetroParser:
                 street_line = lines[0].strip()
                 
                 # Парсим улицу и дом из первой строки
-                # Пример: "Юго-Западная, 1" -> улица: "Юго-Западная", дом: "1"
+                # Пример: "Поварская ул., 8/1к1" -> улица: "Поварская ул.", дом: "8/1к1"
                 street_parts = street_line.split(',')
                 if len(street_parts) >= 2:
                     street = street_parts[0].strip()
@@ -2213,7 +2225,7 @@ class EnhancedMetroParser:
                 metro_line = lines[1].strip()
                 
                 # Парсим метро и время до метро
-                # Пример: "Юго-Западная, от 31 мин." -> метро: "Юго-Западная", время: 31
+                # Пример: "Арбатская, до 5 мин." -> метро: "Арбатская", время: 5
                 metro_parts = metro_line.split(',')
                 metro_name = None
                 time_to_metro = None
@@ -2624,12 +2636,56 @@ class EnhancedMetroParser:
                 card_data.update(address_components)
                 
             except:
-                card_data['address'] = "Не найдено"
-                card_data.update({
-                    'street_house': 'не найдено',
-                    'metro_name': 'не найдено',
-                    'time_to_metro': 'не найдено'
-                })
+                # Если не нашли по data-marker, ищем в характеристиках
+                try:
+                    # Ищем адрес в характеристиках (последние строки с метро)
+                    params_text = card_data.get('params', '')
+                    if params_text and params_text != "Не найдено":
+                        lines = params_text.strip().split('\n')
+                        
+                        # Ищем строки с адресом (содержат метро)
+                        address_lines = []
+                        for line in lines:
+                            line = line.strip()
+                            if line and self.is_metro_line(line):
+                                address_lines.append(line)
+                        
+                        if len(address_lines) >= 2:
+                            # Первая строка - улица и дом, вторая - метро и время
+                            address_text = '\n'.join(address_lines[:2])
+                            address_components = self.parse_address(address_text)
+                            card_data.update(address_components)
+                            card_data['address'] = address_text
+                        elif len(address_lines) == 1:
+                            # Только одна строка с адресом
+                            address_text = address_lines[0]
+                            address_components = self.parse_address(address_text)
+                            card_data.update(address_components)
+                            card_data['address'] = address_text
+                        else:
+                            # Адрес не найден
+                            card_data.update({
+                                'street_house': 'не найдено',
+                                'metro_name': 'не указано',
+                                'time_to_metro': 'не указано'
+                            })
+                            card_data['address'] = "Не найдено"
+                    else:
+                        card_data.update({
+                            'street_house': 'не найдено',
+                            'metro_name': 'не указано',
+                            'time_to_metro': 'не указано'
+                        })
+                        card_data['address'] = "Не найдено"
+                        
+                except Exception as e:
+                    print(f"⚠️ Ошибка поиска адреса в характеристиках: {e}")
+                    card_data.update({
+                        'street_house': 'не найдено',
+                        'metro_name': 'не указано',
+                        'time_to_metro': 'не указано'
+                    })
+                    card_data['address'] = "Не найдено"
             
             # Характеристики
             try:
