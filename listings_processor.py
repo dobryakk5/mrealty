@@ -1,5 +1,4 @@
-import re
-import json
+import re, json
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -197,7 +196,7 @@ class ListingsProcessor:
             print(f"Ошибка при извлечении фотографий Avito: {e}")
             return []
     
-    async def extract_photo_urls_from_url(self, listing_url: str) -> list[str]:
+    async def extract_photo_urls_from_url(self, listing_url: str, max_photos: int = None) -> list[str]:
         """Асинхронно получает URL и извлекает ссылки на фотографии"""
         try:
             # Определяем источник ссылки
@@ -207,14 +206,23 @@ class ListingsProcessor:
                 response = await asyncio.get_event_loop().run_in_executor(None, lambda: requests.get(listing_url, headers=HEADERS))
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
-                return self.extract_avito_photo_urls(soup)
+                photo_urls = self.extract_avito_photo_urls(soup)
             else:
                 print(f"📸 Извлекаем фотографии с Cian: {listing_url}")
                 # Для Cian используем существующую логику
                 response = await asyncio.get_event_loop().run_in_executor(None, lambda: requests.get(listing_url, headers=HEADERS))
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
-                return self.extract_photo_urls(soup)
+                photo_urls = self.extract_photo_urls(soup)
+            
+            # Ограничиваем количество фото до возврата
+            if max_photos and len(photo_urls) > max_photos:
+                limited_photo_urls = photo_urls[:max_photos]
+                print(f"🔢 Ограничиваем извлеченные фото: {len(limited_photo_urls)} из {len(photo_urls)}")
+                return limited_photo_urls
+            else:
+                return photo_urls
+                
         except Exception as e:
             print(f"Ошибка при получении URL {listing_url}: {e}")
             return []
@@ -251,23 +259,37 @@ class ListingsProcessor:
             else:
                 # Для Cian используем существующую логику
                 print(f"🏠 Извлекаем информацию об объявлении Cian: {url}")
-                response = requests.get(url, headers=HEADERS)
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
                 
-                # Парсим основную информацию
-                listing_data = parse_listing(url, requests.Session())
+                # Создаем одну сессию для всех запросов
+                session = requests.Session()
+                session.headers.update(HEADERS)
                 
-                # Формируем структурированную информацию
-                info = {
-                    'rooms': listing_data.get('Комнат', 'N/A'),
-                    'price': listing_data.get('Цена_raw', 'N/A'),
-                    'floor': listing_data.get('Этаж', 'N/A'),
-                    'total_area': listing_data.get('Общая площадь', 'N/A'),
-                    'kitchen_area': listing_data.get('Площадь кухни', 'N/A'),
-                    'metro': listing_data.get('Минут метро', 'N/A')
-                }
-                return info
+                try:
+                    # Парсим основную информацию
+                    listing_data = parse_listing(url, session)
+                    
+                    # Формируем структурированную информацию
+                    info = {
+                        'rooms': listing_data.get('Комнат', 'N/A'),
+                        'price': listing_data.get('Цена_raw', 'N/A'),
+                        'floor': listing_data.get('Этаж', 'N/A'),
+                        'total_area': listing_data.get('Общая площадь', 'N/A'),
+                        'kitchen_area': listing_data.get('Площадь кухни', 'N/A'),
+                        'metro': listing_data.get('Минут метро', 'N/A')
+                    }
+                    return info
+                except Exception as e:
+                    print(f"Ошибка при парсинге Cian объявления {url}: {str(e)}")
+                    return {
+                        'rooms': 'N/A',
+                        'price': 'N/A',
+                        'floor': 'N/A',
+                        'total_area': 'N/A',
+                        'kitchen_area': 'N/A',
+                        'metro': 'N/A'
+                    }
+                finally:
+                    session.close()
         except Exception as e:
             print(f"Ошибка при извлечении информации об объявлении {url}: {str(e)}")
             return {
@@ -339,118 +361,10 @@ class ListingsProcessor:
                 }
                 .photo-item img:hover { 
                     border-color: #0066cc;
-                    transition: border-color 0.2s ease;
-                }
-                
-                /* Стили для модального окна */
-                .modal {
-                    display: none;
-                    position: fixed;
-                    z-index: 1000;
-                    left: 0;
-                    top: 0;
-                    width: 100%;
-                    height: 100%;
-                    background-color: rgba(0,0,0,0.9);
-                    overflow: auto;
-                }
-                
-                .modal-content {
-                    margin: auto;
-                    display: block;
-                    width: 90%;
-                    max-width: 800px;
-                    max-height: 90%;
-                    position: relative;
-                    top: 50%;
-                    transform: translateY(-50%);
-                }
-                
-                .modal-image {
-                    width: 100%;
-                    height: auto;
-                    max-height: 90vh;
-                    object-fit: contain;
-                }
-                
-                .modal-caption {
-                    margin: auto;
-                    display: block;
-                    width: 80%;
-                    max-width: 700px;
-                    text-align: center;
-                    color: white;
-                    padding: 20px 0;
-                    font-size: 18px;
-                }
-                
-                .close {
-                    position: absolute;
-                    top: 15px;
-                    right: 35px;
-                    color: #f1f1f1;
-                    font-size: 40px;
-                    font-weight: bold;
                     cursor: pointer;
+                    transform: scale(1.02);
+                    transition: transform 0.2s ease;
                 }
-                
-                .close:hover,
-                .close:focus {
-                    color: #bbb;
-                    text-decoration: none;
-                    cursor: pointer;
-                }
-                
-                /* Кнопки навигации по фотографиям */
-                .modal-nav {
-                    position: absolute;
-                    top: 50%;
-                    transform: translateY(-50%);
-                    background: rgba(0,0,0,0.5);
-                    color: white;
-                    border: none;
-                    padding: 15px 12px;
-                    cursor: pointer;
-                    font-size: 24px;
-                    border-radius: 50%;
-                    width: 50px;
-                    height: 50px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    transition: background-color 0.3s;
-                }
-                
-                .modal-nav:hover {
-                    background: rgba(0,0,0,0.8);
-                }
-                
-                .modal-nav.prev {
-                    left: 20px;
-                }
-                
-                .modal-nav.next {
-                    right: 20px;
-                }
-                
-                .modal-nav:disabled {
-                    opacity: 0.3;
-                    cursor: not-allowed;
-                }
-                
-                /* Счетчик фотографий */
-                .modal-counter {
-                    position: absolute;
-                    bottom: 20px;
-                    left: 50%;
-                    transform: translateX(-50%);
-                    color: white;
-                    background: rgba(0,0,0,0.7);
-                    padding: 8px 16px;
-                    border-radius: 20px;
-                    font-size: 14px;
-                }
-                
                 .no-photos { color: #666; font-style: italic; }
                 
                 /* Мобильная адаптация */
@@ -478,136 +392,11 @@ class ListingsProcessor:
                     }
                     .main-title { font-size: 24px; }
                     .subtitle { font-size: 16px; }
-                    
-                    /* Мобильная адаптация для кнопок навигации */
-                    .modal-nav {
-                        width: 40px;
-                        height: 40px;
-                        font-size: 20px;
-                        padding: 10px 8px;
-                    }
-                    
-                    .modal-nav.prev {
-                        left: 10px;
-                    }
-                    
-                    .modal-nav.next {
-                        right: 10px;
-                    }
-                    
-                    .modal-counter {
-                        bottom: 10px;
-                        font-size: 12px;
-                        padding: 6px 12px;
-                    }
                 }
             </style>
         </head>
         <body>
             <h1 class="main-title">🏠 Подбор недвижимости</h1>
-            
-            <!-- Модальное окно для фотографий -->
-            <div id="photoModal" class="modal">
-                <span class="close" onclick="closeModal()">&times;</span>
-                <button class="modal-nav prev" id="prevBtn" onclick="showPrevPhoto()" title="Предыдущее фото (←)">‹</button>
-                <button class="modal-nav next" id="nextBtn" onclick="showNextPhoto()" title="Следующее фото (→)">›</button>
-                <img class="modal-content modal-image" id="modalImage">
-                <div class="modal-caption" id="modalCaption"></div>
-                <div class="modal-counter" id="modalCounter"></div>
-            </div>
-            
-            <script>
-                // Проверяем загрузку скрипта и элементов
-                console.log('Скрипт загружен');
-                
-                // Глобальные переменные для навигации по фотографиям
-                let currentPhotos = [];
-                let currentPhotoIndex = 0;
-                let currentListingIndex = 0;
-                
-                // Функция открытия модального окна
-                function openModal(imageSrc, caption, photos, photoIndex, listingIndex) {
-                    currentPhotos = photos || [];
-                    currentPhotoIndex = photoIndex || 0;
-                    currentListingIndex = listingIndex || 0;
-                    
-                    document.getElementById('photoModal').style.display = 'block';
-                    document.getElementById('modalImage').src = imageSrc;
-                    document.getElementById('modalCaption').innerHTML = caption;
-                    
-                    updateModalNavigation();
-                }
-                
-                // Функция закрытия модального окна
-                function closeModal() {
-                    document.getElementById('photoModal').style.display = 'none';
-                    currentPhotos = [];
-                    currentPhotoIndex = 0;
-                }
-                
-                // Функция показа предыдущего фото
-                function showPrevPhoto() {
-                    if (currentPhotos.length > 1) {
-                        currentPhotoIndex = (currentPhotoIndex - 1 + currentPhotos.length) % currentPhotos.length;
-                        const photo = currentPhotos[currentPhotoIndex];
-                        document.getElementById('modalImage').src = photo.src;
-                        document.getElementById('modalCaption').innerHTML = photo.caption;
-                        updateModalNavigation();
-                    }
-                }
-                
-                // Функция показа следующего фото
-                function showNextPhoto() {
-                    if (currentPhotos.length > 1) {
-                        currentPhotoIndex = (currentPhotoIndex + 1) % currentPhotos.length;
-                        const photo = currentPhotos[currentPhotoIndex];
-                        document.getElementById('modalImage').src = photo.src;
-                        document.getElementById('modalCaption').innerHTML = photo.caption;
-                        updateModalNavigation();
-                    }
-                }
-                
-                // Обновление навигации и счетчика
-                function updateModalNavigation() {
-                    const prevBtn = document.getElementById('prevBtn');
-                    const nextBtn = document.getElementById('nextBtn');
-                    const counter = document.getElementById('modalCounter');
-                    
-                    if (currentPhotos.length <= 1) {
-                        prevBtn.style.display = 'none';
-                        nextBtn.style.display = 'none';
-                        counter.style.display = 'none';
-                    } else {
-                        prevBtn.style.display = 'flex';
-                        nextBtn.style.display = 'flex';
-                        counter.style.display = 'block';
-                        
-                        prevBtn.disabled = false;
-                        nextBtn.disabled = false;
-                        
-                        counter.innerHTML = `${{currentPhotoIndex + 1}} из ${{currentPhotos.length}}`;
-                    }
-                }
-                
-                // Закрытие модального окна при клике вне изображения
-                window.onclick = function(event) {
-                    const modal = document.getElementById('photoModal');
-                    if (event.target == modal) {
-                        closeModal();
-                    }
-                }
-                
-                // Обработка клавиш для навигации
-                document.addEventListener('keydown', function(event) {
-                    if (event.key === 'Escape') {
-                        closeModal();
-                    } else if (event.key === 'ArrowLeft') {
-                        showPrevPhoto();
-                    } else if (event.key === 'ArrowRight') {
-                        showNextPhoto();
-                    }
-                });
-            </script>
         """)
         
         if subtitle:
@@ -624,7 +413,6 @@ class ListingsProcessor:
                 if self.is_avito_url(listing_url):
                     # Для Avito используем асинхронный парсинг
                     listing_data = await self.parse_avito_listing(listing_url)
-                    
                     if not listing_data:
                         html_parts.append(f"""
                         <div class="listing">
@@ -641,8 +429,7 @@ class ListingsProcessor:
                     listing_data_display = {
                         'Комнат': listing_data.get('rooms', 'N/A'),
                         'Цена_raw': listing_data.get('price', 'N/A'),
-                        'floor': listing_data.get('floor', 'N/A'),
-                        'total_floors': listing_data.get('total_floors', 'N/A'),
+                        'Этаж': listing_data.get('floor', 'N/A'),
                         'Общая площадь': listing_data.get('total_area', 'N/A'),
                         'Площадь кухни': listing_data.get('kitchen_area', 'N/A'),
                         'Минут метро': listing_data.get('metro_time', 'N/A')
@@ -666,7 +453,6 @@ class ListingsProcessor:
                         'rooms': listing_data.get('Комнат', 'N/A'),
                         'price': listing_data.get('Цена_raw', 'N/A'),
                         'floor': listing_data.get('Этаж', 'N/A'),
-                        'total_floors': listing_data.get('total_floors', 'N/A'),
                         'total_area': listing_data.get('Общая площадь', 'N/A'),
                         'kitchen_area': listing_data.get('Площадь кухни', 'N/A'),
                         'metro_time': listing_data.get('Минут метро', 'N/A'),
@@ -688,28 +474,10 @@ class ListingsProcessor:
                 # Добавляем основную информацию
                 html_parts.append(f"<p><strong>Комнат:</strong> {listing_data_display.get('Комнат', 'N/A')}</p>")
                 html_parts.append(f"<p><strong>Цена:</strong> {listing_data_display.get('Цена_raw', 'N/A')}</p>")
-                
-                # Отображаем этаж правильно для Avito и Cian
-                # Для Cian используем поле 'Этаж', для Avito - 'floor'
-                floor_value = listing_data_display.get('floor', listing_data_display.get('Этаж', 'N/A'))
-                total_floors = listing_data_display.get('total_floors')
-                if total_floors and total_floors != 'N/A':
-                    html_parts.append(f"<p><strong>Этаж:</strong> {floor_value}/{total_floors}</p>")
-                else:
-                    html_parts.append(f"<p><strong>Этаж:</strong> {floor_value}</p>")
-                
+                html_parts.append(f"<p><strong>Этаж:</strong> {listing_data_display.get('Этаж', 'N/A')}</p>")
                 html_parts.append(f"<p><strong>Общая площадь:</strong> {listing_data_display.get('Общая площадь', 'N/A')} м²</p>")
                 html_parts.append(f"<p><strong>Кухня:</strong> {listing_data_display.get('Площадь кухни', 'N/A')} м²</p>")
 
-                
-                # Создаем массив фотографий для модального окна
-                modal_photos = []
-                if photo_urls:
-                    for idx, photo_url in enumerate(photo_urls):
-                        modal_photos.append({
-                            'src': photo_url,
-                            'caption': f"Фото {idx + 1}"
-                        })
                 
                 # Добавляем фотографии (только для Cian)
                 if photo_urls:
@@ -718,11 +486,11 @@ class ListingsProcessor:
                     for j, photo_url in enumerate(photo_urls):
                         html_parts.append(f"""
                         <div class="photo-item">
-                            <img src="{photo_url}" alt="Фото {j+1}" 
-                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
-                                 loading="lazy"
-                                 onclick="openModal('{photo_url}', 'Фото {j+1}', {json.dumps(modal_photos)}, {j}, {i})"
-                                 style="cursor: pointer;">
+                            <a href="{photo_url}" target="_blank" title="Открыть фото {j+1} в полном размере">
+                                <img src="{photo_url}" alt="Фото {j+1}" 
+                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+                                     loading="lazy">
+                            </a>
                             <div class="photo-fallback" style="display: none; background: #f0f0f0; border: 1px dashed #ccc; border-radius: 5px; padding: 20px; text-align: center; color: #666;">
                                 <div>📷 Фото {j+1}</div>
                                 <div style="font-size: 12px; margin-top: 5px;">
@@ -753,62 +521,6 @@ class ListingsProcessor:
         </html>
         """)
         
-        # Проверяем размер HTML
-        html_content = ''.join(html_parts)
-        html_size_mb = len(html_content.encode('utf-8')) / 1024 / 1024
-        print(f"📊 Размер HTML: {html_size_mb:.1f}MB")
-        
-        if html_size_mb > 10:  # Предупреждение при больших файлах
-            print(f"⚠️  ВНИМАНИЕ: HTML файл очень большой ({html_size_mb:.1f}MB)!")
-            print(f"⚠️  Это может вызвать проблемы при передаче данных.")
-            
-            # Если файл слишком большой, создаем упрощенную версию
-            if html_size_mb > 15:  # Критически большой файл
-                print(f"🚨 HTML файл критически большой ({html_size_mb:.1f}MB), создаем упрощенную версию...")
-                
-                # Создаем упрощенную версию без фотографий
-                simplified_html = f"""
-                <!DOCTYPE html>
-                <html lang="ru">
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>Подбор недвижимости (упрощенная версия)</title>
-                    <style>
-                        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }}
-                        .listing {{ background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-                        .warning {{ background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-                    </style>
-                </head>
-                <body>
-                    <h1 class="main-title">Подбор недвижимости</h1>
-                    <div class="warning">
-                        <strong>⚠️ Внимание:</strong> Исходный файл был слишком большим ({html_size_mb:.1f}MB), 
-                        поэтому отображается упрощенная версия без фотографий. 
-                        Для просмотра полной версии с фотографиями попробуйте обработать меньше объявлений за раз.
-                    </div>
-                """
-                
-                # Добавляем только текстовую информацию об объявлениях
-                for i, listing_url in enumerate(listing_urls, 1):
-                    simplified_html += f"""
-                    <div class="listing">
-                        <h3>Вариант #{i}</h3>
-                        <p><strong>Ссылка:</strong> <a href="{listing_url}" target="_blank">{listing_url}</a></p>
-                        <p><strong>Статус:</strong> Фотографии недоступны (файл слишком большой)</p>
-                    </div>
-                    """
-                
-                simplified_html += """
-                </body>
-                </html>
-                """
-                
-                simplified_size_mb = len(simplified_html.encode('utf-8')) / 1024 / 1024
-                print(f"✅ Создана упрощенная версия размером {simplified_size_mb:.1f}MB")
-                
-                return simplified_html
-        
         # Сохраняем все объявления в БД
         if db_listings:
             try:
@@ -820,7 +532,7 @@ class ListingsProcessor:
         else:
             print(f"⚠️ Нет данных для сохранения в БД")
         
-        return html_content
+        return ''.join(html_parts)
     
     async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False, max_photos_per_listing: int = None, listing_comments: list[str] = None, pre_parsed_data: dict = None) -> tuple[str, list[dict]]:
         """Генерирует HTML галерею с встроенными Base64 изображениями и возвращает статистику по фото"""
@@ -846,6 +558,9 @@ class ListingsProcessor:
                 }}
                 
                 .listing-header {{
+                    display: flex;
+                    gap: 30px;
+                    align-items: flex-start;
                     margin-bottom: 20px;
                 }}
                 
@@ -927,7 +642,7 @@ class ListingsProcessor:
                     transition: transform 0.2s ease;
                 }}
                 
-                /* Стили для модального окна */
+                /* Модальное окно для фото */
                 .modal {{
                     display: none;
                     position: fixed;
@@ -937,7 +652,7 @@ class ListingsProcessor:
                     width: 100%;
                     height: 100%;
                     background-color: rgba(0,0,0,0.9);
-                    overflow: auto;
+                    cursor: pointer;
                 }}
                 
                 .modal-content {{
@@ -946,27 +661,8 @@ class ListingsProcessor:
                     width: 90%;
                     max-width: 800px;
                     max-height: 90%;
-                    position: relative;
-                    top: 50%;
-                    transform: translateY(-50%);
-                }}
-                
-                .modal-image {{
-                    width: 100%;
-                    height: auto;
-                    max-height: 90vh;
                     object-fit: contain;
-                }}
-                
-                .modal-caption {{
-                    margin: auto;
-                    display: block;
-                    width: 80%;
-                    max-width: 700px;
-                    text-align: center;
-                    color: white;
-                    padding: 20px 0;
-                    font-size: 18px;
+                    margin-top: 5%;
                 }}
                 
                 .close {{
@@ -979,13 +675,72 @@ class ListingsProcessor:
                     cursor: pointer;
                 }}
                 
-                .close:hover,
-                .close:focus {{
+                .close:hover {{
                     color: #bbb;
-                    text-decoration: none;
-                    cursor: pointer;
                 }}
                 
+                /* Кнопки навигации */
+                .nav-btn {{
+                    position: absolute;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    background: rgba(0,0,0,0.5);
+                    color: white;
+                    border: none;
+                    padding: 15px 10px;
+                    cursor: pointer;
+                    font-size: 18px;
+                    border-radius: 5px;
+                    transition: background 0.3s;
+                }}
+                
+                .nav-btn:hover {{
+                    background: rgba(0,0,0,0.8);
+                }}
+                
+                .prev-btn {{
+                    left: 20px;
+                }}
+                
+                .next-btn {{
+                    right: 20px;
+                }}
+                
+                /* Счетчик фото */
+                .photo-counter {{
+                    position: absolute;
+                    bottom: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    color: white;
+                    background: rgba(0,0,0,0.7);
+                    padding: 8px 15px;
+                    border-radius: 20px;
+                    font-size: 14px;
+                }}
+                
+                /* Подсказка для смахивания */
+                .swipe-hint {{
+                    position: absolute;
+                    top: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    color: white;
+                    background: rgba(0,0,0,0.7);
+                    padding: 8px 15px;
+                    border-radius: 20px;
+                    font-size: 12px;
+                    text-align: center;
+                    opacity: 0.8;
+                    transition: opacity 0.3s;
+                }}
+                
+                /* Скрываем подсказку на десктопе */
+                @media (min-width: 769px) {{
+                    .swipe-hint {{
+                        display: none;
+                    }}
+                }}
                 .photo-fallback {{ 
                     width: 100%; 
                     height: 140px; 
@@ -1022,7 +777,10 @@ class ListingsProcessor:
                         width: 100%;
                         box-sizing: border-box;
                     }}
-
+                    .listing-header {{
+                        flex-direction: column;
+                        gap: 20px;
+                    }}
                     .listing-info {{
                         width: 100%;
                         min-width: 100%;
@@ -1044,158 +802,60 @@ class ListingsProcessor:
                     .main-title {{ font-size: 24px; }}
                     .subtitle {{ font-size: 16px; }}
                     
-                    /* Мобильная адаптация для кнопок навигации */
-                    .modal-nav {{
-                        width: 40px;
-                        height: 40px;
-                        font-size: 20px;
-                        padding: 10px 8px;
+                    /* Мобильная адаптация для модального окна */
+                    .modal-content {{
+                        width: 95%;
+                        margin-top: 10%;
+                    }}
+                    .close {{
+                        top: 10px;
+                        right: 20px;
+                        font-size: 30px;
                     }}
                     
-                    .modal-nav.prev {{
+                    /* Мобильная адаптация для кнопок навигации */
+                    .nav-btn {{
+                        padding: 12px 8px;
+                        font-size: 16px;
+                    }}
+                    .prev-btn {{
                         left: 10px;
                     }}
-                    
-                    .modal-nav.next {{
+                    .next-btn {{
                         right: 10px;
                     }}
-                    
-                    .modal-counter {{
-                        bottom: 10px;
+                    .photo-counter {{
+                        bottom: 15px;
                         font-size: 12px;
                         padding: 6px 12px;
+                    }}
+                    
+                    /* Улучшения для touch-устройств */
+                    .modal {{
+                        touch-action: pan-y pinch-zoom;
+                    }}
+                    
+                    .modal-content {{
+                        touch-action: pan-x pan-y pinch-zoom;
+                        user-select: none;
+                        -webkit-user-select: none;
+                        -moz-user-select: none;
+                        -ms-user-select: none;
+                    }}
+                    
+                    /* Анимация для смахивания */
+                    .modal-content {{
+                        transition: transform 0.2s ease;
+                    }}
+                    
+                    .modal-content.swiping {{
+                        transition: none;
                     }}
                 }}
             </style>
         </head>
         <body>
             <h1 class="main-title">🏠 Подбор недвижимости</h1>
-            
-            <!-- Модальное окно для фотографий -->
-            <div id="photoModal" class="modal">
-                <span class="close" onclick="closeModal()">&times;</span>
-                <button class="modal-nav prev" id="prevBtn" onclick="showPrevPhoto()" title="Предыдущее фото (←)">‹</button>
-                <button class="modal-nav next" id="nextBtn" onclick="showNextPhoto()" title="Следующее фото (→)">›</button>
-                <img class="modal-content modal-image" id="modalImage">
-                <div class="modal-caption" id="modalCaption"></div>
-                <div class="modal-counter" id="modalCounter"></div>
-            </div>
-            
-            <script>
-                // Проверяем, что модальное окно существует
-                console.log('Скрипт загружен');
-                console.log('Модальное окно:', document.getElementById('photoModal'));
-                console.log('Кнопка prev:', document.getElementById('prevBtn'));
-                console.log('Кнопка next:', document.getElementById('nextBtn'));
-                
-                // Глобальные переменные для навигации по фотографиям
-                let currentPhotos = [];
-                let currentPhotoIndex = 0;
-                let currentListingIndex = 0;
-                
-                // Функция открытия модального окна
-                function openModal(imageSrc, caption, photos, photoIndex, listingIndex) {{
-                    console.log('openModal вызвана с параметрами:', imageSrc, caption, photos, photoIndex, listingIndex);
-                    
-                    currentPhotos = photos || [];
-                    currentPhotoIndex = photoIndex || 0;
-                    currentListingIndex = listingIndex || 0;
-                    
-                    console.log('Элементы модального окна:', {
-                        modal: document.getElementById('photoModal'),
-                        image: document.getElementById('modalImage'),
-                        caption: document.getElementById('modalCaption')
-                    });
-                    
-                    document.getElementById('photoModal').style.display = 'block';
-                    document.getElementById('modalImage').src = imageSrc;
-                    document.getElementById('modalCaption').innerHTML = caption;
-                    
-                    updateModalNavigation();
-                    console.log('Модальное окно должно быть открыто');
-                }}
-                
-                // Функция закрытия модального окна
-                function closeModal() {{
-                    document.getElementById('photoModal').style.display = 'none';
-                    currentPhotos = [];
-                    currentPhotoIndex = 0;
-                }}
-                
-                // Функция показа предыдущего фото
-                function showPrevPhoto() {{
-                    if (currentPhotos.length > 1) {{
-                        currentPhotoIndex = (currentPhotoIndex - 1 + currentPhotos.length) % currentPhotos.length;
-                        const photo = currentPhotos[currentPhotoIndex];
-                        document.getElementById('modalImage').src = photo.src;
-                        document.getElementById('modalCaption').innerHTML = photo.caption;
-                        updateModalNavigation();
-                    }}
-                }}
-                
-                // Функция показа следующего фото
-                function showNextPhoto() {{
-                    if (currentPhotos.length > 1) {{
-                        currentPhotoIndex = (currentPhotoIndex + 1) % currentPhotos.length;
-                        const photo = currentPhotos[currentPhotoIndex];
-                        document.getElementById('modalImage').src = photo.src;
-                        document.getElementById('modalCaption').innerHTML = photo.caption;
-                        updateModalNavigation();
-                    }}
-                }}
-                
-                // Обновление навигации и счетчика
-                function updateModalNavigation() {{
-                    const prevBtn = document.getElementById('prevBtn');
-                    const nextBtn = document.getElementById('nextBtn');
-                    const counter = document.getElementById('modalCounter');
-                    
-                    if (currentPhotos.length <= 1) {{
-                        prevBtn.style.display = 'none';
-                        nextBtn.style.display = 'none';
-                        counter.style.display = 'none';
-                    }} else {{
-                        prevBtn.style.display = 'flex';
-                        nextBtn.style.display = 'flex';
-                        counter.style.display = 'block';
-                        
-                        prevBtn.disabled = false;
-                        nextBtn.disabled = false;
-                        
-                        counter.innerHTML = `${{currentPhotoIndex + 1}} из ${{currentPhotos.length}}`;
-                    }}
-                }}
-                
-                // Закрытие модального окна при клике вне изображения
-                window.onclick = function(event) {{
-                    const modal = document.getElementById('photoModal');
-                    if (event.target == modal) {{
-                        closeModal();
-                    }}
-                }}
-                
-                // Обработка клавиш для навигации
-                document.addEventListener('keydown', function(event) {{
-                    if (event.key === 'Escape') {{
-                        closeModal();
-                    }} else if (event.key === 'ArrowLeft') {{
-                        showPrevPhoto();
-                    }} else if (event.key === 'ArrowRight') {{
-                        showNextPhoto();
-                    }}
-                }});
-                
-                // Проверяем элементы после загрузки страницы
-                document.addEventListener('DOMContentLoaded', function() {{
-                    console.log('DOM загружен, проверяем элементы:');
-                    console.log('Модальное окно:', document.getElementById('photoModal'));
-                    console.log('Кнопка prev:', document.getElementById('prevBtn'));
-                    console.log('Кнопка next:', document.getElementById('nextBtn'));
-                    console.log('Изображение:', document.getElementById('modalImage'));
-                    console.log('Подпись:', document.getElementById('modalCaption'));
-                    console.log('Счетчик:', document.getElementById('modalCounter'));
-                }});
-            </script>
         """
         
         if subtitle:
@@ -1232,6 +892,7 @@ class ListingsProcessor:
                                     <h3>Вариант #{i}</h3>
                                     <p>Ошибка при парсинге Avito</p>
                                 </div>
+
                             </div>
                             <div class="listing-photos">
                                 <p>📷 Фотографии недоступны</p>
@@ -1248,41 +909,32 @@ class ListingsProcessor:
                         'rooms': listing_data.get('rooms', 'N/A'),
                         'price': listing_data.get('price', 'N/A'),
                         'floor': listing_data.get('floor', 'N/A'),
-                        'total_floors': listing_data.get('total_floors', 'N/A'),
                         'total_area': listing_data.get('total_area', 'N/A'),
                         'kitchen_area': listing_data.get('kitchen_area', 'N/A'),
                         'metro': listing_data.get('metro_time', 'N/A')
                     }
                     
-                    # Обрабатываем фотографии Avito
+                    # Для Avito фотографии не обрабатываем (требует отдельной логики)
                     processed_photos = []
                     
+                    # Извлекаем URL фотографий Avito
                     if 'photo_urls' in listing_data and listing_data['photo_urls']:
                         photo_urls = listing_data['photo_urls']
                         print(f"📸 Найдено {len(photo_urls)} фотографий Avito")
                         
-                        # Сначала пробуем обработать через photo_processor
+                        # Обрабатываем фотографии Avito
                         if photo_urls:
-                            try:
-                                processed_photos = self.photo_processor.process_photos_for_embedded_html(
-                                    photo_urls, remove_watermarks, max_photos=8
-                                )
-                                print(f"✅ Обработано {len(processed_photos)} фотографий Avito через photo_processor")
-                            except Exception as e:
-                                print(f"⚠️ Ошибка обработки фотографий Avito через photo_processor: {e}")
-                                processed_photos = []
-                        
-                        # Если photo_processor не сработал, создаем простые ссылки
-                        if not processed_photos and photo_urls:
-                            print(f"🔄 Создаем простые ссылки для {len(photo_urls)} фотографий Avito")
-                            for idx, url in enumerate(photo_urls):
-                                processed_photos.append({
-                                    'format': 'jpeg',
-                                    'base64': None,
-                                    'url': url,
-                                    'is_external': True
-                                })
-                            print(f"✅ Создано {len(processed_photos)} простых ссылок")
+                            # Ограничиваем количество фото до скачивания
+                            if max_photos_per_listing:
+                                limited_photo_urls = photo_urls[:max_photos_per_listing]
+                                print(f"🔢 Ограничиваем фото для Avito: {len(limited_photo_urls)} из {len(photo_urls)}")
+                            else:
+                                limited_photo_urls = photo_urls
+                            
+                            processed_photos = self.photo_processor.process_photos_for_embedded_html(
+                                limited_photo_urls, remove_watermarks
+                            )
+                            print(f"✅ Обработано {len(processed_photos)} фотографий Avito")
                     else:
                         print(f"⚠️ Фотографии Avito не найдены в данных")
                 else:
@@ -1290,12 +942,12 @@ class ListingsProcessor:
                     listing_info = await self.extract_listing_info(listing_url)
                     
                     # Извлекаем URL фотографий
-                    photo_urls = await self.extract_photo_urls_from_url(listing_url)
+                    photo_urls = await self.extract_photo_urls_from_url(listing_url, max_photos_per_listing)
                     
                     # Обрабатываем фотографии
                     if photo_urls:
                         processed_photos = self.photo_processor.process_photos_for_embedded_html(
-                            photo_urls, remove_watermarks, max_photos=8
+                            photo_urls, remove_watermarks
                         )
                     else:
                         processed_photos = []
@@ -1306,8 +958,7 @@ class ListingsProcessor:
                         'source': 4,  # Cian
                         'rooms': listing_info.get('rooms', 'N/A'),
                         'price': listing_info.get('price', 'N/A'),
-                        'floor': listing_info.get('floor', listing_info.get('Этаж', 'N/A')),
-                        'total_floors': listing_info.get('total_floors', 'N/A'),
+                        'floor': listing_info.get('floor', 'N/A'),
                         'total_area': listing_info.get('total_area', 'N/A'),
                         'kitchen_area': listing_info.get('kitchen_area', 'N/A'),
                         'metro_time': listing_info.get('metro', 'N/A'),
@@ -1329,72 +980,31 @@ class ListingsProcessor:
                 html_content += f"""
                             <p><strong>Комнат:</strong> {listing_info.get('rooms', 'N/A')}</p>
                             <p><strong>Цена:</strong> {listing_info.get('price', 'N/A')}</p>
-                            <p><strong>Этаж:</strong> {listing_info.get('floor', 'N/A')}{'/' + str(listing_info.get('total_floors')) if listing_info.get('total_floors') and listing_info.get('total_floors') != 'N/A' else ''}</p>
+                            <p><strong>Этаж:</strong> {listing_info.get('floor', 'N/A')}</p>
                             <p><strong>Общая площадь:</strong> {listing_info.get('total_area', 'N/A')} м²</p>
                             <p><strong>Кухня:</strong> {listing_info.get('kitchen_area', 'N/A')} м²</p>
                         </div>
+                        
+
                     </div>
                     
                     <div class="listing-photos">
                 """
                 
-                # Создаем массив фотографий для модального окна
-                modal_photos = []
-                
-                if processed_photos:
-                    for idx, photo in enumerate(processed_photos):
-                        if photo and 'base64' in photo:
-                            # Base64 изображение - проверяем размер
-                            base64_size_mb = len(photo['base64']) / 1024 / 1024
-                            if base64_size_mb > 2:  # Пропускаем слишком большие изображения
-                                print(f"⚠️  Пропускаем фото {idx+1} для modal_photos - слишком большое ({base64_size_mb:.1f}MB)")
-                                continue
-                                
-                            modal_photos.append({
-                                'src': f"data:image/{photo['format']};base64,{photo['base64']}",
-                                'caption': f"Фото {idx + 1}" if idx > 0 else "Главное фото"
-                            })
-                        elif photo and 'url' in photo:
-                            # Внешняя ссылка
-                            modal_photos.append({
-                                'src': photo['url'],
-                                'caption': f"Фото {idx + 1}" if idx > 0 else "Главное фото"
-                            })
-                
-                                # Добавляем сетку со всеми фотографиями
+                # Добавляем все фото в сетку одинаково
                 if processed_photos and len(processed_photos) > 0:
                     html_content += '<div class="photo-grid">'
-                    for j, photo_data in enumerate(processed_photos):
+                    for j, photo_data in enumerate(processed_photos, 1):
                         if photo_data and 'base64' in photo_data:
-                            # Base64 изображение - проверяем размер
-                            base64_size_mb = len(photo_data['base64']) / 1024 / 1024
-                            if base64_size_mb > 2:  # Пропускаем слишком большие изображения
-                                print(f"⚠️  Пропускаем фото {j+1} - слишком большое ({base64_size_mb:.1f}MB)")
-                                continue
-                                
-                            photo_caption = "Главное фото" if j == 0 else f"Фото {j + 1}"
                             html_content += f"""
                             <div class="photo-item">
                                 <img src="data:image/{photo_data['format']};base64,{photo_data['base64']}" 
-                                     alt="{photo_caption}" 
+                                     alt="Фото {j}" 
                                      loading="lazy"
-                                     onclick="console.log('Клик по фото {j}'); openModal('data:image/{photo_data['format']};base64,{photo_data['base64']}', '{photo_caption}', {json.dumps(modal_photos)}, {j}, {i})"
-                                     style="cursor: pointer;">
+                                     onclick="openPhotoModal('data:image/{photo_data['format']};base64,{photo_data['base64']}', {j-1})"
+                                     title="Кликните для увеличения">
                             </div>
                             """
-                        elif photo_data and 'url' in photo_data:
-                            # Внешняя ссылка
-                            photo_caption = "Главное фото" if j == 0 else f"Фото {j + 1}"
-                            html_content += f"""
-                            <div class="photo-item">
-                                <img src="{photo_data['url']}" 
-                                     alt="{photo_caption}" 
-                                     loading="lazy"
-                                     onclick="console.log('Клик по фото {j}'); openModal('{photo_data['url']}', '{photo_caption}', {json.dumps(modal_photos)}, {j}, {i})"
-                                     style="cursor: pointer;">
-                            </div>
-                            """
-                    
                     html_content += '</div>'
                 else:
                     html_content += '<div class="photo-grid">'
@@ -1405,8 +1015,6 @@ class ListingsProcessor:
                         html_content += '<p>📷 Фотографии Avito не найдены</p>'
                     else:
                         html_content += '<p>📷 Фотографии не найдены</p>'
-                else:
-                    html_content += f'<p>📷 Найдено фотографий: {len(processed_photos)}</p>'
                 
                 # Сохраняем статистику по фото
                 photo_stats.append({
@@ -1435,6 +1043,7 @@ class ListingsProcessor:
                             <h3>Вариант #{i}</h3>
                             <p>Ошибка при обработке: {str(e)}</p>
                         </div>
+
                     </div>
                     <div class="listing-photos">
                         <p>📷 Фотографии недоступны</p>
@@ -1443,64 +1052,190 @@ class ListingsProcessor:
                 """
         
         html_content += """
+            <!-- Модальное окно для фото -->
+            <div id="photoModal" class="modal">
+                <span class="close">&times;</span>
+                <img class="modal-content" id="modalImage">
+                <button class="nav-btn prev-btn" id="prevBtn">‹</button>
+                <button class="nav-btn next-btn" id="nextBtn">›</button>
+                <div class="photo-counter" id="photoCounter"></div>
+                <div class="swipe-hint" id="swipeHint">👆 Смахивайте влево/вправо для навигации</div>
+            </div>
+            
+            <script>
+                // Глобальные переменные для навигации
+                var allPhotos = [];
+                var currentPhotoIndex = 0;
+                
+                // Функция для сбора всех фото в массив
+                function collectAllPhotos() {{
+                    allPhotos = [];
+                    var photoItems = document.querySelectorAll('.photo-item img');
+                    photoItems.forEach(function(img) {{
+                        allPhotos.push(img.src);
+                    }});
+                    console.log('Собрано фото:', allPhotos.length);
+                }}
+                
+                // Собираем фото после загрузки страницы
+                window.addEventListener('load', collectAllPhotos);
+                
+                // Получаем элементы модального окна
+                var modal = document.getElementById("photoModal");
+                var modalImg = document.getElementById("modalImage");
+                var closeBtn = document.getElementsByClassName("close")[0];
+                var prevBtn = document.getElementById("prevBtn");
+                var nextBtn = document.getElementById("nextBtn");
+                var photoCounter = document.getElementById("photoCounter");
+                
+                // Функция для открытия фото в модальном окне
+                function openPhotoModal(photoSrc, photoIndex = 0) {{
+                    currentPhotoIndex = photoIndex;
+                    modal.style.display = "block";
+                    modalImg.src = photoSrc;
+                    updateNavigation();
+                }}
+                
+                // Функция для обновления навигации
+                function updateNavigation() {{
+                    if (allPhotos.length <= 1) {{
+                        prevBtn.style.display = "none";
+                        nextBtn.style.display = "none";
+                        photoCounter.style.display = "none";
+                    }} else {{
+                        prevBtn.style.display = "block";
+                        nextBtn.style.display = "block";
+                        photoCounter.style.display = "block";
+                        photoCounter.textContent = (currentPhotoIndex + 1) + " / " + allPhotos.length;
+                    }}
+                }}
+                
+                // Функция для перехода к предыдущему фото
+                function showPrevPhoto() {{
+                    if (currentPhotoIndex > 0) {{
+                        currentPhotoIndex--;
+                    }} else {{
+                        currentPhotoIndex = allPhotos.length - 1;
+                    }}
+                    modalImg.src = allPhotos[currentPhotoIndex];
+                    updateNavigation();
+                }}
+                
+                // Функция для перехода к следующему фото
+                function showNextPhoto() {{
+                    if (currentPhotoIndex < allPhotos.length - 1) {{
+                        currentPhotoIndex++;
+                    }} else {{
+                        currentPhotoIndex = 0;
+                    }}
+                    modalImg.src = allPhotos[currentPhotoIndex];
+                    updateNavigation();
+                }}
+                
+                // Обработчики событий для кнопок навигации
+                prevBtn.onclick = function(e) {{
+                    e.stopPropagation();
+                    showPrevPhoto();
+                }}
+                
+                nextBtn.onclick = function(e) {{
+                    e.stopPropagation();
+                    showNextPhoto();
+                }}
+                
+                // Закрытие по клику на крестик
+                closeBtn.onclick = function() {{
+                    modal.style.display = "none";
+                }}
+                
+                // Закрытие по клику вне фото
+                modal.onclick = function(e) {{
+                    if (e.target === modal) {{
+                        modal.style.display = "none";
+                    }}
+                }}
+                
+                // Закрытие по клавише Escape
+                document.addEventListener('keydown', function(e) {{
+                    if (e.key === 'Escape') {{
+                        modal.style.display = "none";
+                    }} else if (e.key === 'ArrowLeft') {{
+                        showPrevPhoto();
+                    }} else if (e.key === 'ArrowRight') {{
+                        showNextPhoto();
+                    }}
+                }});
+                
+                // Поддержка смахивания на мобильных устройствах
+                var touchStartX = 0;
+                var touchStartY = 0;
+                var touchEndX = 0;
+                var touchEndY = 0;
+                
+                // Обработка начала касания
+                modal.addEventListener('touchstart', function(e) {{
+                    touchStartX = e.changedTouches[0].screenX;
+                    touchStartY = e.changedTouches[0].screenY;
+                    
+                    // Добавляем класс для анимации
+                    modalImg.classList.add('swiping');
+                    
+                    // Скрываем подсказку после первого касания
+                    var swipeHint = document.getElementById('swipeHint');
+                    if (swipeHint) {{
+                        swipeHint.style.opacity = '0';
+                        setTimeout(function() {{
+                            swipeHint.style.display = 'none';
+                        }}, 300);
+                    }}
+                }}, false);
+                
+                // Обработка окончания касания
+                modal.addEventListener('touchend', function(e) {{
+                    touchEndX = e.changedTouches[0].screenX;
+                    touchEndY = e.changedTouches[0].screenY;
+                    handleSwipe();
+                }}, false);
+                
+                // Функция обработки смахивания
+                function handleSwipe() {{
+                    var diffX = touchStartX - touchEndX;
+                    var diffY = touchStartY - touchEndY;
+                    
+                    // Минимальное расстояние для смахивания (в пикселях)
+                    var minSwipeDistance = 50;
+                    
+                    // Проверяем, что смахивание достаточно длинное
+                    if (Math.abs(diffX) > minSwipeDistance || Math.abs(diffY) > minSwipeDistance) {{
+                        // Определяем направление смахивания
+                        if (Math.abs(diffX) > Math.abs(diffY)) {{
+                            // Горизонтальное смахивание
+                            if (diffX > 0) {{
+                                // Смахивание влево - следующее фото
+                                showNextPhoto();
+                            }} else {{
+                                // Смахивание вправо - предыдущее фото
+                                showPrevPhoto();
+                            }}
+                        }} else {{
+                            // Вертикальное смахивание
+                            if (diffY > 0) {{
+                                // Смахивание вверх - можно использовать для закрытия
+                                // modal.style.display = "none";
+                            }} else {{
+                                // Смахивание вниз - можно использовать для закрытия
+                                // modal.style.display = "none";
+                            }}
+                        }}
+                    }}
+                    
+                    // Убираем класс анимации
+                    modalImg.classList.remove('swiping');
+                }}
+            </script>
         </body>
         </html>
         """
-        
-        # Проверяем размер HTML
-        html_size_mb = len(html_content.encode('utf-8')) / 1024 / 1024
-        print(f"📊 Размер HTML: {html_size_mb:.1f}MB")
-        
-        if html_size_mb > 10:  # Предупреждение при больших файлах
-            print(f"⚠️  ВНИМАНИЕ: HTML файл очень большой ({html_size_mb:.1f}MB)!")
-            print(f"⚠️  Это может вызвать проблемы при передаче данных.")
-            
-            # Если файл слишком большой, создаем упрощенную версию
-            if html_size_mb > 15:  # Критически большой файл
-                print(f"🚨 HTML файл критически большой ({html_size_mb:.1f}MB), создаем упрощенную версию...")
-                
-                # Создаем упрощенную версию без фотографий
-                simplified_html = f"""
-                <!DOCTYPE html>
-                <html lang="ru">
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>Подбор недвижимости (упрощенная версия)</title>
-                    <style>
-                        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }}
-                        .listing {{ background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-                        .warning {{ background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-                    </style>
-                </head>
-                <body>
-                    <h1 class="main-title">Подбор недвижимости</h1>
-                    <div class="warning">
-                        <strong>⚠️ Внимание:</strong> Исходный файл был слишком большим ({html_size_mb:.1f}MB), 
-                        поэтому отображается упрощенная версия без фотографий. 
-                        Для просмотра полной версии с фотографиями попробуйте обработать меньше объявлений за раз.
-                    </div>
-                """
-                
-                # Добавляем только текстовую информацию об объявлениях
-                for i, listing_url in enumerate(listing_urls, 1):
-                    simplified_html += f"""
-                    <div class="listing">
-                        <h3>Вариант #{i}</h3>
-                        <p><strong>Ссылка:</strong> <a href="{listing_url}" target="_blank">{listing_url}</a></p>
-                        <p><strong>Статус:</strong> Фотографии недоступны (файл слишком большой)</p>
-                    </div>
-                    """
-                
-                simplified_html += """
-                </body>
-                </html>
-                """
-                
-                simplified_size_mb = len(simplified_html.encode('utf-8')) / 1024 / 1024
-                print(f"✅ Создана упрощенная версия размером {simplified_size_mb:.1f}MB")
-                
-                return simplified_html, []  # Возвращаем пустую статистику для упрощенной версии
         
         # Сохраняем все объявления в БД
         if db_listings:
@@ -1604,7 +1339,7 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
                         'URL': url,
                         'Комнат': avito_data.get('rooms', 'N/A'),
                         'Цена_raw': avito_data.get('price', 'N/A'),
-                        'Этаж': f"{avito_data.get('floor', 'N/A')}/{avito_data.get('total_floors')}" if avito_data.get('total_floors') and avito_data.get('total_floors') != 'N/A' else f"{avito_data.get('floor', 'N/A')}",
+                        'Этаж': avito_data.get('floor', 'N/A'),
                         'Общая площадь': avito_data.get('total_area', 'N/A'),
                         'Жилая площадь': avito_data.get('living_area', 'N/A'),
                         'Площадь кухни': avito_data.get('kitchen_area', 'N/A'),
@@ -1637,13 +1372,6 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
                 print(f"🏠 Парсим объявление Cian: {url}")
                 # Для Cian используем существующую логику
                 cian_data = parse_listing(url, sess)
-                
-                # Преобразуем данные Cian в формат для Excel
-                if cian_data.get('total_floors') and cian_data['total_floors'] != 'N/A':
-                    cian_data['Этаж'] = f"{cian_data.get('Этаж', 'N/A')}/{cian_data['total_floors']}"
-                else:
-                    cian_data['Этаж'] = cian_data.get('Этаж', 'N/A')
-                
                 rows.append(cian_data)
         except Exception as e:
             print(f"Ошибка при парсинге {url}: {e}")
@@ -1745,16 +1473,7 @@ def parse_listing(url: str, session: requests.Session) -> dict:
             if key == 'Строительная серия':
                 data[key] = val
                 continue
-            if kl == 'этаж': 
-                # Парсим этаж: "5 из 5" -> floor=5, total_floors=5
-                floor_match = re.search(r'(\d+)\s*из\s*(\d+)', val)
-                if floor_match:
-                    data['Этаж'] = int(floor_match.group(1))
-                    data['total_floors'] = int(floor_match.group(2))
-                else:
-                    data['Этаж'] = val
-                    data['total_floors'] = None
-                continue
+            if kl == 'этаж': data['Этаж'] = val; continue
             if kl in ['санузел', 'балкон/лоджия', 'количество лифтов']:
                 data[key] = val; continue
             data[key] = extract_number(val) if re.search(r"\d", val) else val
@@ -1766,15 +1485,7 @@ def parse_listing(url: str, session: requests.Session) -> dict:
             key, val = lines[i].strip(), lines[i+1].strip()
             kl = key.lower().strip()
             if key == 'Строительная серия': data[key] = val; continue
-            if kl == 'этаж' and 'Этаж' not in data: 
-                # Парсим этаж: "5 из 5" -> floor=5, total_floors=5
-                floor_match = re.search(r'(\d+)\s*из\s*(\d+)', val)
-                if floor_match:
-                    data['Этаж'] = int(floor_match.group(1))
-                    data['total_floors'] = int(floor_match.group(2))
-                else:
-                    data['Этаж'] = val
-                    data['total_floors'] = None
+            if kl == 'этаж' and 'Этаж' not in data: data['Этаж'] = val
             elif kl in ['санузел', 'балкон/лоджия', 'количество лифтов']: data[key] = val
             else: data[key] = extract_number(val) if re.search(r"\d", val) else val
 

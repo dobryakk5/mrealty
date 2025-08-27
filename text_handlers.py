@@ -149,10 +149,21 @@ async def handle_text_message(message: Message):
                 # Ищем цифру перед словом "подбор"
                 text_before_podbor = text[:podbor_pos].strip()
                 import re
-                photo_limit_match = re.search(r'(\d+)\s*$', text_before_podbor)
+                
+                # Ищем цифру в начале текста перед "подбор" (например: "3 подбор")
+                print(f"🔍 DEBUG: Ищем ограничение фото в тексте: '{text_before_podbor}'")
+                photo_limit_match = re.search(r'^(\d+)\s*', text_before_podbor)
                 if photo_limit_match:
                     max_photos_per_listing = int(photo_limit_match.group(1))
-                    print(f"🔢 Ограничение фото: {max_photos_per_listing} на объявление")
+                    print(f"🔢 Ограничение фото: {max_photos_per_listing} на объявление (найдено в начале)")
+                else:
+                    # Если не нашли в начале, ищем любую цифру перед "подбор"
+                    photo_limit_match = re.search(r'(\d+)\s*$', text_before_podbor)
+                    if photo_limit_match:
+                        max_photos_per_listing = int(photo_limit_match.group(1))
+                        print(f"🔢 Ограничение фото: {max_photos_per_listing} на объявление (найдено в конце)")
+                    else:
+                        print(f"🔍 DEBUG: Ограничение фото не найдено, будут загружены все доступные фото")
                 
                 text_after_podbor = text[podbor_pos + 6:].strip()
                 first_url_pos = -1
@@ -190,7 +201,7 @@ async def handle_text_message(message: Message):
                         else:
                             await message.answer(f"⚠️ Фото не найдены в объявлении {stat['listing_number']}")
             else:
-                html_content = await listings_processor.generate_html_gallery(urls, message.from_user.id, subtitle, listing_comments)
+                html_content = await listings_processor.generate_html_gallery(urls, message.from_user.id, subtitle, listing_comments, max_photos_per_listing)
                 filename = f"Подбор_{metro_info}.html"
                 caption = f"🏠 Подбор недвижимости (обычные ссылки)"
 

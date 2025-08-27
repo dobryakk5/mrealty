@@ -97,12 +97,12 @@ class PhotoProcessor:
             print(f"❌ Ошибка при обработке {photo_url}: {e}")
             return None
 
-    def process_photos_for_embedded_html(self, photo_urls: List[str], remove_watermarks: bool = False, max_photos: int = 10) -> List[Dict[str, Any]]:
+    def process_photos_for_embedded_html(self, photo_urls: List[str], remove_watermarks: bool = False, max_photos: int = None) -> List[Dict[str, Any]]:
         """
         Обрабатывает фотографии для встроенного HTML с ограничением количества
         """
-        # Ограничиваем количество фотографий
-        if len(photo_urls) > max_photos:
+        # Ограничиваем количество фотографий (если указано ограничение)
+        if max_photos is not None and len(photo_urls) > max_photos:
             print(f"⚠️  Слишком много фотографий ({len(photo_urls)}), ограничиваем до {max_photos}")
             photo_urls = photo_urls[:max_photos]
         
