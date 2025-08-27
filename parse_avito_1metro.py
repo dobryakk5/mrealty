@@ -88,7 +88,7 @@ class EnhancedMetroParser:
             # НОВЫЕ ПАРАМЕТРЫ для множественных метро
             self.multiple_metro_ids = getattr(globals(), 'MULTIPLE_METRO_IDS', [])  # Список ID метро для парсинга одной ссылкой
             self.multiple_metro_avito_ids = []  # Список avito_id для множественных метро
-            self.max_metro_per_link = getattr(globals(), 'MAX_METRO_PER_LINK', 10)  # Максимум метро в одной ссылке
+            self.max_metro_per_link = getattr(globals(), 'MAX_METRO_PER_LINK', 50)  # Максимум метро в одной ссылке (увеличено для больших батчей)
             
             print("✅ Конфигурация загружена из config_parser.py")
         else:
@@ -120,7 +120,7 @@ class EnhancedMetroParser:
             # НОВЫЕ ПАРАМЕТРЫ для множественных метро
             self.multiple_metro_ids = []  # Список ID метро для парсинга одной ссылкой
             self.multiple_metro_avito_ids = []  # Список avito_id для множественных метро
-            self.max_metro_per_link = 10  # Максимум метро в одной ссылке
+            self.max_metro_per_link = 50  # Максимум метро в одной ссылке (увеличено для больших батчей)
         
         self.driver = None
         self.database_url = None
