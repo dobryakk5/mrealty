@@ -31,9 +31,9 @@ class PhotoProcessor:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
     
-    def download_and_convert_to_base64(self, photo_url: str, timeout: int = 10) -> Optional[Dict[str, str]]:
+    def download_and_convert_to_base64(self, photo_url: str, timeout: int = 10, max_size_mb: int = 2) -> Optional[Dict[str, str]]:
         """
-        Скачивает фото и конвертирует в base64
+        Скачивает фото и конвертирует в base64 с ограничением размера
         """
         try:
             response = self.session.get(photo_url, timeout=timeout)
@@ -41,13 +41,52 @@ class PhotoProcessor:
             
             # Конвертируем в base64
             image_data = response.content
+            
+            # Проверяем размер исходного изображения
+            if len(image_data) > max_size_mb * 1024 * 1024:
+                print(f"⚠️  Изображение слишком большое ({len(image_data) / 1024 / 1024:.1f}MB), сжимаем...")
+                
+                # Открываем изображение для сжатия
+                image = Image.open(io.BytesIO(image_data))
+                
+                # Определяем формат
+                format_type = image.format.lower() if image.format else 'jpeg'
+                
+                # Сжимаем изображение
+                img_buffer = io.BytesIO()
+                
+                # Для JPEG используем качество 70%, для PNG - сжимаем
+                if format_type == 'jpeg' or format_type == 'jpg':
+                    image = image.convert('RGB')
+                    image.save(img_buffer, format='JPEG', quality=70, optimize=True)
+                elif format_type == 'png':
+                    # Конвертируем в RGB и сохраняем как JPEG для сжатия
+                    image = image.convert('RGB')
+                    image.save(img_buffer, format='JPEG', quality=80, optimize=True)
+                    format_type = 'jpeg'
+                else:
+                    # Для других форматов конвертируем в JPEG
+                    image = image.convert('RGB')
+                    image.save(img_buffer, format='JPEG', quality=80, optimize=True)
+                    format_type = 'jpeg'
+                
+                img_buffer.seek(0)
+                image_data = img_buffer.getvalue()
+                
+                print(f"✅ Сжато до {len(image_data) / 1024 / 1024:.1f}MB")
+            
+            # Конвертируем в base64
             base64_data = base64.b64encode(image_data).decode('utf-8')
+            
+            # Проверяем размер base64
+            base64_size_mb = len(base64_data) / 1024 / 1024
+            if base64_size_mb > max_size_mb:
+                print(f"⚠️  Base64 все еще слишком большой ({base64_size_mb:.1f}MB), пропускаем")
+                return None
             
             # Определяем тип изображения
             image = Image.open(io.BytesIO(image_data))
-            format_type = image.format.lower()
-            
-
+            format_type = image.format.lower() if image.format else 'jpeg'
             
             return {
                 'base64': base64_data,
@@ -58,10 +97,15 @@ class PhotoProcessor:
             print(f"❌ Ошибка при обработке {photo_url}: {e}")
             return None
 
-    def process_photos_for_embedded_html(self, photo_urls: List[str], remove_watermarks: bool = False) -> List[Dict[str, Any]]:
+    def process_photos_for_embedded_html(self, photo_urls: List[str], remove_watermarks: bool = False, max_photos: int = 10) -> List[Dict[str, Any]]:
         """
-        Обрабатывает фотографии для встроенного HTML
+        Обрабатывает фотографии для встроенного HTML с ограничением количества
         """
+        # Ограничиваем количество фотографий
+        if len(photo_urls) > max_photos:
+            print(f"⚠️  Слишком много фотографий ({len(photo_urls)}), ограничиваем до {max_photos}")
+            photo_urls = photo_urls[:max_photos]
+        
         processed_photos = []
         seen_urls = set()  # Для отслеживания уже обработанных URL
         

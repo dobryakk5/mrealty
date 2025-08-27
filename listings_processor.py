@@ -753,6 +753,62 @@ class ListingsProcessor:
         </html>
         """)
         
+        # Проверяем размер HTML
+        html_content = ''.join(html_parts)
+        html_size_mb = len(html_content.encode('utf-8')) / 1024 / 1024
+        print(f"📊 Размер HTML: {html_size_mb:.1f}MB")
+        
+        if html_size_mb > 10:  # Предупреждение при больших файлах
+            print(f"⚠️  ВНИМАНИЕ: HTML файл очень большой ({html_size_mb:.1f}MB)!")
+            print(f"⚠️  Это может вызвать проблемы при передаче данных.")
+            
+            # Если файл слишком большой, создаем упрощенную версию
+            if html_size_mb > 15:  # Критически большой файл
+                print(f"🚨 HTML файл критически большой ({html_size_mb:.1f}MB), создаем упрощенную версию...")
+                
+                # Создаем упрощенную версию без фотографий
+                simplified_html = f"""
+                <!DOCTYPE html>
+                <html lang="ru">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Подбор недвижимости (упрощенная версия)</title>
+                    <style>
+                        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }}
+                        .listing {{ background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                        .warning {{ background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0; }}
+                    </style>
+                </head>
+                <body>
+                    <h1 class="main-title">Подбор недвижимости</h1>
+                    <div class="warning">
+                        <strong>⚠️ Внимание:</strong> Исходный файл был слишком большим ({html_size_mb:.1f}MB), 
+                        поэтому отображается упрощенная версия без фотографий. 
+                        Для просмотра полной версии с фотографиями попробуйте обработать меньше объявлений за раз.
+                    </div>
+                """
+                
+                # Добавляем только текстовую информацию об объявлениях
+                for i, listing_url in enumerate(listing_urls, 1):
+                    simplified_html += f"""
+                    <div class="listing">
+                        <h3>Вариант #{i}</h3>
+                        <p><strong>Ссылка:</strong> <a href="{listing_url}" target="_blank">{listing_url}</a></p>
+                        <p><strong>Статус:</strong> Фотографии недоступны (файл слишком большой)</p>
+                    </div>
+                    """
+                
+                simplified_html += """
+                </body>
+                </html>
+                """
+                
+                simplified_size_mb = len(simplified_html.encode('utf-8')) / 1024 / 1024
+                print(f"✅ Создана упрощенная версия размером {simplified_size_mb:.1f}MB")
+                
+                return simplified_html
+        
         # Сохраняем все объявления в БД
         if db_listings:
             try:
@@ -764,7 +820,7 @@ class ListingsProcessor:
         else:
             print(f"⚠️ Нет данных для сохранения в БД")
         
-        return ''.join(html_parts)
+        return html_content
     
     async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False, max_photos_per_listing: int = None, listing_comments: list[str] = None, pre_parsed_data: dict = None) -> tuple[str, list[dict]]:
         """Генерирует HTML галерею с встроенными Base64 изображениями и возвращает статистику по фото"""
@@ -1209,7 +1265,7 @@ class ListingsProcessor:
                         if photo_urls:
                             try:
                                 processed_photos = self.photo_processor.process_photos_for_embedded_html(
-                                    photo_urls, remove_watermarks
+                                    photo_urls, remove_watermarks, max_photos=8
                                 )
                                 print(f"✅ Обработано {len(processed_photos)} фотографий Avito через photo_processor")
                             except Exception as e:
@@ -1239,7 +1295,7 @@ class ListingsProcessor:
                     # Обрабатываем фотографии
                     if photo_urls:
                         processed_photos = self.photo_processor.process_photos_for_embedded_html(
-                            photo_urls, remove_watermarks
+                            photo_urls, remove_watermarks, max_photos=8
                         )
                     else:
                         processed_photos = []
@@ -1288,7 +1344,12 @@ class ListingsProcessor:
                 if processed_photos:
                     for idx, photo in enumerate(processed_photos):
                         if photo and 'base64' in photo:
-                            # Base64 изображение
+                            # Base64 изображение - проверяем размер
+                            base64_size_mb = len(photo['base64']) / 1024 / 1024
+                            if base64_size_mb > 2:  # Пропускаем слишком большие изображения
+                                print(f"⚠️  Пропускаем фото {idx+1} для modal_photos - слишком большое ({base64_size_mb:.1f}MB)")
+                                continue
+                                
                             modal_photos.append({
                                 'src': f"data:image/{photo['format']};base64,{photo['base64']}",
                                 'caption': f"Фото {idx + 1}" if idx > 0 else "Главное фото"
@@ -1305,7 +1366,12 @@ class ListingsProcessor:
                     html_content += '<div class="photo-grid">'
                     for j, photo_data in enumerate(processed_photos):
                         if photo_data and 'base64' in photo_data:
-                            # Base64 изображение
+                            # Base64 изображение - проверяем размер
+                            base64_size_mb = len(photo_data['base64']) / 1024 / 1024
+                            if base64_size_mb > 2:  # Пропускаем слишком большие изображения
+                                print(f"⚠️  Пропускаем фото {j+1} - слишком большое ({base64_size_mb:.1f}MB)")
+                                continue
+                                
                             photo_caption = "Главное фото" if j == 0 else f"Фото {j + 1}"
                             html_content += f"""
                             <div class="photo-item">
@@ -1380,6 +1446,61 @@ class ListingsProcessor:
         </body>
         </html>
         """
+        
+        # Проверяем размер HTML
+        html_size_mb = len(html_content.encode('utf-8')) / 1024 / 1024
+        print(f"📊 Размер HTML: {html_size_mb:.1f}MB")
+        
+        if html_size_mb > 10:  # Предупреждение при больших файлах
+            print(f"⚠️  ВНИМАНИЕ: HTML файл очень большой ({html_size_mb:.1f}MB)!")
+            print(f"⚠️  Это может вызвать проблемы при передаче данных.")
+            
+            # Если файл слишком большой, создаем упрощенную версию
+            if html_size_mb > 15:  # Критически большой файл
+                print(f"🚨 HTML файл критически большой ({html_size_mb:.1f}MB), создаем упрощенную версию...")
+                
+                # Создаем упрощенную версию без фотографий
+                simplified_html = f"""
+                <!DOCTYPE html>
+                <html lang="ru">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Подбор недвижимости (упрощенная версия)</title>
+                    <style>
+                        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }}
+                        .listing {{ background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                        .warning {{ background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 20px 0; }}
+                    </style>
+                </head>
+                <body>
+                    <h1 class="main-title">Подбор недвижимости</h1>
+                    <div class="warning">
+                        <strong>⚠️ Внимание:</strong> Исходный файл был слишком большим ({html_size_mb:.1f}MB), 
+                        поэтому отображается упрощенная версия без фотографий. 
+                        Для просмотра полной версии с фотографиями попробуйте обработать меньше объявлений за раз.
+                    </div>
+                """
+                
+                # Добавляем только текстовую информацию об объявлениях
+                for i, listing_url in enumerate(listing_urls, 1):
+                    simplified_html += f"""
+                    <div class="listing">
+                        <h3>Вариант #{i}</h3>
+                        <p><strong>Ссылка:</strong> <a href="{listing_url}" target="_blank">{listing_url}</a></p>
+                        <p><strong>Статус:</strong> Фотографии недоступны (файл слишком большой)</p>
+                    </div>
+                    """
+                
+                simplified_html += """
+                </body>
+                </html>
+                """
+                
+                simplified_size_mb = len(simplified_html.encode('utf-8')) / 1024 / 1024
+                print(f"✅ Создана упрощенная версия размером {simplified_size_mb:.1f}MB")
+                
+                return simplified_html, []  # Возвращаем пустую статистику для упрощенной версии
         
         # Сохраняем все объявления в БД
         if db_listings:
