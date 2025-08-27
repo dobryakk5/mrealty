@@ -61,7 +61,7 @@ async def create_ads_cian_table() -> None:
             CREATE INDEX IF NOT EXISTS idx_ads_cian_processed ON ads_cian(processed);
             
             """)
-            print("[DB] Таблица ads_cian создана успешно")
+            # print("[DB] Таблица ads_cian создана успешно")  # Убрано из лога
             
             # Создаем схему system если её нет
             await conn.execute("CREATE SCHEMA IF NOT EXISTS system")
@@ -84,7 +84,7 @@ async def create_ads_cian_table() -> None:
             CREATE INDEX IF NOT EXISTS idx_parsing_progress_latest ON system.parsing_progress(property_type, time_period, source, time_upd DESC);
             CREATE INDEX IF NOT EXISTS idx_parsing_progress_no_time ON system.parsing_progress(property_type, source, time_upd DESC) WHERE time_period IS NULL;
             """)
-            print("[DB] Таблица system.parsing_progress создана успешно")
+            # print("[DB] Таблица system.parsing_progress создана успешно")  # Убрано из лога
             
             # Мигрируем существующие записи, помечая как обработанные те, что содержат исключаемые слова
             try:

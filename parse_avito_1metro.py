@@ -484,8 +484,8 @@ class EnhancedMetroParser:
                 age_hours = (now - timestamp).total_seconds() / 3600
                 
                 print(f"✅ Загружены cookies от {timestamp_str}")
-                print(f"📊 Количество cookies: {len(cookies_data['cookies'])}")
-                print(f"⏰ Возраст cookies: {age_hours:.1f} часов")
+                # print(f"📊 Количество cookies: {len(cookies_data['cookies'])}")  # Убрано из лога
+                # print(f"⏰ Возраст cookies: {age_hours:.1f} часов")  # Убрано из лога
                 
                 # Предупреждение если cookies старые
                 if age_hours > 24:
@@ -496,7 +496,7 @@ class EnhancedMetroParser:
             except Exception as e:
                 print(f"⚠️ Не удалось проверить возраст cookies: {e}")
                 print(f"✅ Загружены cookies от {cookies_data['timestamp']}")
-                print(f"📊 Количество cookies: {len(cookies_data['cookies'])}")
+                # print(f"📊 Количество cookies: {len(cookies_data['cookies'])}")  # Убрано из лога
             
             return cookies_data
             
@@ -519,9 +519,9 @@ class EnhancedMetroParser:
             # Headless режим из конфигурации
             if hasattr(self, 'headless_mode') and self.headless_mode:
                 options.add_argument("--headless")
-                print("🔒 Браузер запущен в headless режиме")
+                # print("🔒 Браузер запущен в headless режиме")  # Убрано из лога
             else:
-                print("🖥️ Браузер запущен с интерфейсом")
+                # print("🖥️ Браузер запущен с интерфейсом")  # Убрано из лога
             
             # User-Agent
             options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -558,7 +558,7 @@ class EnhancedMetroParser:
                 "profile.managed_default_content_settings.images": 2
             })
             
-            print("🔧 Создаем браузер...")
+            # print("🔧 Создаем браузер...")  # Убрано из лога
             self.driver = webdriver.Chrome(options=options)
             
             # Убираем webdriver
@@ -812,10 +812,10 @@ class EnhancedMetroParser:
                 print("❌ Данные cookies отсутствуют или некорректны")
                 return False
             
-            print(f"📊 Найдено cookies для применения: {len(cookies_data['cookies'])}")
+            # print(f"📊 Найдено cookies для применения: {len(cookies_data['cookies'])}")  # Убрано из лога
             
             # Сначала переходим на домен
-            print("🌐 Переходим на AVITO...")
+            # print("🌐 Переходим на AVITO...")  # Убрано из лога
             self.driver.get("https://avito.ru")
             time.sleep(5)  # Увеличиваем время ожидания
             
@@ -825,7 +825,7 @@ class EnhancedMetroParser:
                 WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
-                print("✅ Страница AVITO загружена")
+                # print("✅ Страница AVITO загружена")  # Убрано из лога
             except:
                 print("⚠️ Страница AVITO загрузилась частично, продолжаем...")
             
@@ -864,7 +864,8 @@ class EnhancedMetroParser:
                     
                     # Выводим информацию о важных cookies
                     if cookie['name'] in ['_avisc', 'srv_id', 'buyer_location_id']:
-                        print(f"🔐 Применен важный cookie: {cookie['name']}")
+                        # print(f"🔐 Применен важный cookie: {cookie['name']}")  # Убрано из лога
+                        pass
                     
                 except Exception as e:
                     print(f"⚠️ Ошибка применения cookie {i+1} ({cookie.get('name', 'unknown')}): {e}")
@@ -1526,7 +1527,7 @@ class EnhancedMetroParser:
                                 card_data['raw_text'] = card.text.strip()
                                 parsed_cards.append(card_data)
                                 group_parsed_count += 1
-                                print(f"   ✅ Спарсена карточка {j+1} (пачкой)")
+                                # print(f"   ✅ Спарсена карточка {j+1} (пачкой)")  # Убрано из лога
                             else:
                                 print(f"   ⚠️ Карточка {j+1} не дала данных")
                                     
@@ -1547,7 +1548,7 @@ class EnhancedMetroParser:
                                             card_data['raw_text'] = card.text.strip()
                                             parsed_cards.append(card_data)
                                             group_parsed_count += 1
-                                            print(f"   ✅ Спарсена карточка {j+1} (пачкой, после retry)")
+                                            # print(f"   ✅ Спарсена карточка {j+1} (пачкой, после retry)")  # Убрано из лога
                                         else:
                                             print(f"   ⚠️ Карточка {j+1} не дала данных (после retry)")
                                     else:
@@ -3166,7 +3167,7 @@ class EnhancedMetroParser:
                 
                 # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: если страница помечена как пустая, но карточки найдены
                 if len(page_cards) > 0:
-                    print(f"✅ Страница {page} содержит {len(page_cards)} карточек - продолжаем парсинг")
+                    # print(f"✅ Страница {page} содержит {len(page_cards)} карточек - продолжаем парсинг")  # Убрано из лога
                     
                     # ПРОВЕРЯЕМ на раздел "Вас может заинтересовать" даже если есть карточки
                     try:
@@ -3190,7 +3191,7 @@ class EnhancedMetroParser:
                     try:
                         total_pages = self.get_total_pages_count()
                         if total_pages:
-                            print(f"🎯 Автоматически определено общее количество страниц: {total_pages}")
+                            # print(f"🎯 Автоматически определено общее количество страниц: {total_pages}")  # Убрано из лога
                             total_pages_known = True
                             # Обновляем max_pages если он не был установлен или был меньше
                             if self.max_pages == 0 or self.max_pages > total_pages:
@@ -3203,7 +3204,7 @@ class EnhancedMetroParser:
                 
                 # Добавляем все карточки с этой страницы
                 all_parsed_cards.extend(page_cards)
-                print(f"📄 Страница {page}: {len(page_cards)} карточек")
+                # print(f"📄 Страница {page}: {len(page_cards)} карточек")  # Убрано из лога
                 
                 # НОВАЯ ЛОГИКА: Проверка ограничения по дате
                 if self.max_days > 0 and len(page_cards) > 0:

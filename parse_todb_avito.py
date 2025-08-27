@@ -97,7 +97,7 @@ async def create_ads_avito_table() -> None:
         CREATE INDEX IF NOT EXISTS idx_avito_pagination_updated ON system.avito_pagination_tracking(last_updated DESC);
         """)
         
-        print("[DB] Таблица system.avito_pagination_tracking создана успешно")
+        # print("[DB] Таблица system.avito_pagination_tracking создана успешно")  # Убрано из лога
 
 
 async def convert_seller_type_to_number(seller_type):

@@ -167,15 +167,11 @@ class AvitoCardParser:
                 title_data['total_area'] = None
             
             # 3. Этаж и всего этажей
-            # Ищем различные форматы: "5/14 эт.", "5 из 14", "5/N/A", "5 из 5/N/A"
-            floor_match = re.search(r'(\d+)\s*(?:[\/из]\s*(\d+)|(?:\/N\/A))', title_text)
+            # Ищем "5/14 эт." или "5 из 14"
+            floor_match = re.search(r'(\d+)\s*[\/из]\s*(\d+)\s*эт\.?', title_text)
             if floor_match:
                 title_data['floor'] = int(floor_match.group(1))
-                # Если есть второй номер (общее количество этажей)
-                if floor_match.group(2):
-                    title_data['total_floors'] = int(floor_match.group(2))
-                else:
-                    title_data['total_floors'] = None
+                title_data['total_floors'] = int(floor_match.group(2))
             else:
                 title_data['floor'] = None
                 title_data['total_floors'] = None
@@ -374,24 +370,6 @@ class AvitoCardParser:
             if 'total_floors' in parsed_data:
                 db_data['total_floors'] = parsed_data['total_floors']
             
-            # Если этаж не найден в заголовке, пробуем из параметров квартиры
-            if 'floor' not in parsed_data or parsed_data['floor'] is None:
-                apartment_params = parsed_data.get('apartment_params', {})
-                if 'Этаж' in apartment_params:
-                    floor_text = apartment_params['Этаж']
-                    # Ищем различные форматы: "5 из 5", "5/N/A", "5 из 5/N/A"
-                    floor_match = re.search(r'(\d+)\s*(?:из\s*(\d+)|(?:\/N\/A))', floor_text)
-                    if floor_match:
-                        db_data['floor'] = int(floor_match.group(1))
-                        # Если есть второй номер (общее количество этажей)
-                        if floor_match.group(2):
-                            db_data['total_floors'] = int(floor_match.group(2))
-                        else:
-                            db_data['total_floors'] = None
-                    else:
-                        db_data['floor'] = None
-                        db_data['total_floors'] = None
-            
             # Адрес и метро
             address_data = parsed_data.get('address_data', {})
             if address_data:
@@ -453,18 +431,10 @@ class AvitoCardParser:
                             db_data['living_area'] = float(living_match.group(1).replace(',', '.'))
                 if 'Этаж' in apartment_params:
                     floor_text = apartment_params['Этаж']
-                    # Ищем различные форматы: "5 из 5", "5/N/A", "5 из 5/N/A"
-                    floor_match = re.search(r'(\d+)\s*(?:из\s*(\d+)|(?:\/N\/A))', floor_text)
+                    floor_match = re.search(r'(\d+)\s*из\s*(\d+)', floor_text)
                     if floor_match:
                         db_data['floor_from_params'] = int(floor_match.group(1))
-                        # Если есть второй номер (общее количество этажей)
-                        if floor_match.group(2):
-                            db_data['total_floors_from_params'] = int(floor_match.group(2))
-                        else:
-                            db_data['total_floors_from_params'] = None
-                    else:
-                        db_data['floor_from_params'] = None
-                        db_data['total_floors_from_params'] = None
+                        db_data['total_floors_from_params'] = int(floor_match.group(2))
                 if 'Высота потолков' in apartment_params:
                     ceiling_text = apartment_params['Высота потолков']
                     ceiling_match = re.search(r'(\d+(?:[.,]\d+)?)', ceiling_text)
@@ -499,15 +469,9 @@ class AvitoCardParser:
                         db_data['construction_year'] = int(year_match.group(1))
                 if 'Этажей в доме' in house_params:
                     floors_text = house_params['Этажей в доме']
-                    # Ищем число или "N/A"
-                    if floors_text != 'N/A' and floors_text != 'не указано':
-                        floors_match = re.search(r'(\d+)', floors_text)
-                        if floors_match:
-                            db_data['house_floors'] = int(floors_match.group(1))
-                        else:
-                            db_data['house_floors'] = None
-                    else:
-                        db_data['house_floors'] = None
+                    floors_match = re.search(r'(\d+)', floors_text)
+                    if floors_match:
+                        db_data['house_floors'] = int(floors_match.group(1))
                 if 'Пассажирский лифт' in house_params:
                     db_data['passenger_elevator'] = house_params['Пассажирский лифт']
                 if 'Грузовой лифт' in house_params:
