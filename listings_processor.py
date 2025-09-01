@@ -25,6 +25,14 @@ except ImportError:
     AVITO_AVAILABLE = False
     print("⚠️ Модуль avito_parser_integration не найден, парсинг Avito недоступен")
 
+# Импортируем парсер Yandex Realty
+try:
+    from yandex_parser_integration import YandexCardParser
+    YANDEX_AVAILABLE = True
+except ImportError:
+    YANDEX_AVAILABLE = False
+    print("⚠️ Модуль yandex_parser_integration не найден, парсинг Yandex Realty недоступен")
+
 # Заголовки для HTTP-запросов
 HEADERS = {
     'User-Agent': (
@@ -49,16 +57,22 @@ class ListingsProcessor:
         """Определяет, является ли ссылка ссылкой на Cian"""
         return 'cian.ru' in url.lower()
     
+    def is_yandex_url(self, url: str) -> bool:
+        """Определяет, является ли ссылка ссылкой на Yandex Realty"""
+        return 'realty.yandex.ru' in url.lower()
+    
     def get_url_source(self, url: str) -> int:
-        """Возвращает источник ссылки: 1 - Avito, 4 - Cian"""
+        """Возвращает источник ссылки: 1 - Avito, 4 - Cian, 3 - Yandex Realty"""
         if self.is_avito_url(url):
             return 1  # Avito
         elif self.is_cian_url(url):
             return 4  # Cian
+        elif self.is_yandex_url(url):
+            return 3  # Yandex Realty
         else:
             return 0  # Неизвестный источник
     
-    async def parse_avito_listing(self, url: str) -> dict:
+    async def parse_avito_listing(self, url: str, skip_photos: bool = True) -> dict:
         """Парсит объявление с Avito и возвращает данные в формате для БД"""
         if not AVITO_AVAILABLE:
             print("❌ Парсер Avito недоступен")
@@ -67,8 +81,8 @@ class ListingsProcessor:
         try:
             print(f"🔄 Парсим объявление Avito: {url}")
             
-            # Создаем парсер Avito
-            parser = AvitoCardParser()
+            # Создаем парсер Avito с параметром skip_photos
+            parser = AvitoCardParser(skip_photos=skip_photos)
             
             # Парсим полную страницу объявления
             parsed_data = parser.parse_avito_page(url)
@@ -99,8 +113,49 @@ class ListingsProcessor:
                 except:
                     pass
     
+    async def parse_yandex_listing(self, url: str) -> dict:
+        """Парсит объявление с Yandex Realty и возвращает данные в формате для БД"""
+        if not YANDEX_AVAILABLE:
+            print("❌ Парсер Yandex Realty недоступен")
+            return None
+        
+        try:
+            print(f"🔄 Парсим объявление Yandex Realty: {url}")
+            
+            # Создаем парсер Yandex Realty
+            parser = YandexCardParser()
+            
+            # Парсим полную страницу объявления
+            parsed_data = parser.parse_card(url)
+            if not parsed_data:
+                print("❌ Не удалось спарсить данные объявления Yandex Realty")
+                return None
+            
+            # Преобразуем данные в формат для БД
+            db_data = parser.prepare_data_for_db(parsed_data)
+            if not db_data:
+                print("❌ Не удалось подготовить данные для БД")
+                return None
+            
+            # Добавляем источник
+            db_data['source'] = 3  # Yandex Realty
+            
+            print(f"✅ Объявление Yandex Realty успешно спарсено")
+            return db_data
+            
+        except Exception as e:
+            print(f"❌ Ошибка парсинга объявления Yandex Realty: {e}")
+            return None
+        finally:
+            # Закрываем браузер
+            if 'parser' in locals() and parser.driver:
+                try:
+                    parser.cleanup()
+                except:
+                    pass
+    
     async def parse_listing_universal(self, url: str) -> dict:
-        """Универсальный метод для парсинга объявлений с Cian и Avito"""
+        """Универсальный метод для парсинга объявлений с Cian, Avito и Yandex Realty"""
         try:
             if self.is_avito_url(url):
                 print(f"🏠 Парсим объявление Avito: {url}")
@@ -110,6 +165,9 @@ class ListingsProcessor:
                 # Используем существующий метод для Cian
                 session = requests.Session()
                 return parse_listing(url, session)
+            elif self.is_yandex_url(url):
+                print(f"🏠 Парсим объявление Yandex Realty: {url}")
+                return await self.parse_yandex_listing(url)
             else:
                 print(f"⚠️ Неизвестный источник ссылки: {url}")
                 return None
@@ -237,22 +295,48 @@ class ListingsProcessor:
                 listing_data = await self.parse_avito_listing(url)
                 if not listing_data:
                     return {
-                        'rooms': 'N/A',
-                        'price': 'N/A',
-                        'floor': 'N/A',
-                        'total_area': 'N/A',
-                        'kitchen_area': 'N/A',
-                        'metro': 'N/A'
+                        'rooms': '',
+                        'price': '',
+                        'floor': '',
+                        'total_area': '',
+                        'kitchen_area': '',
+                        'metro': ''
                     }
                 
                 # Преобразуем данные Avito в формат для отображения
                 info = {
-                    'rooms': listing_data.get('rooms', 'N/A'),
-                    'price': listing_data.get('price', 'N/A'),
-                    'floor': listing_data.get('floor', 'N/A'),
-                    'total_area': listing_data.get('total_area', 'N/A'),
-                    'kitchen_area': listing_data.get('kitchen_area', 'N/A'),
-                    'metro': listing_data.get('metro_time', 'N/A'),
+                    'rooms': listing_data.get('rooms', ''),
+                    'price': listing_data.get('price', ''),
+                    'floor': listing_data.get('floor', ''),
+                    'total_area': listing_data.get('total_area', ''),
+                    'kitchen_area': listing_data.get('kitchen_area', ''),
+                    'metro': listing_data.get('metro_time', ''),
+                    'photo_urls': listing_data.get('photo_urls', [])  # Добавляем фотографии
+                }
+                return info
+            elif self.is_yandex_url(url):
+                print(f"🏠 Извлекаем информацию об объявлении Yandex Realty: {url}")
+                # Для Yandex Realty используем асинхронный парсинг
+                listing_data = await self.parse_yandex_listing(url)
+                if not listing_data:
+                    return {
+                        'rooms': '',
+                        'price': '',
+                        'floor': '',
+                        'total_area': '',
+                        'kitchen_area': '',
+                        'metro': ''
+                    }
+                
+                # Преобразуем данные Yandex в формат для отображения
+                info = {
+                    'rooms': listing_data.get('rooms', ''),
+                    'price': listing_data.get('price', ''),
+                    'floor': listing_data.get('floor', ''),
+                    'total_area': listing_data.get('area_total', ''),
+                    'living_area': listing_data.get('living_area', ''),
+                    'kitchen_area': listing_data.get('kitchen_area', ''),
+                    'metro': listing_data.get('metro_time', ''),
                     'photo_urls': listing_data.get('photo_urls', [])  # Добавляем фотографии
                 }
                 return info
@@ -270,35 +354,35 @@ class ListingsProcessor:
                     
                     # Формируем структурированную информацию
                     info = {
-                        'rooms': listing_data.get('Комнат', 'N/A'),
-                        'price': listing_data.get('Цена_raw', 'N/A'),
-                        'floor': listing_data.get('Этаж', 'N/A'),
-                        'total_area': listing_data.get('Общая площадь', 'N/A'),
-                        'kitchen_area': listing_data.get('Площадь кухни', 'N/A'),
-                        'metro': listing_data.get('Минут метро', 'N/A')
+                        'rooms': listing_data.get('Комнат', ''),
+                        'price': listing_data.get('Цена_raw', ''),
+                        'floor': listing_data.get('Этаж', ''),
+                        'total_area': listing_data.get('Общая площадь', ''),
+                        'kitchen_area': listing_data.get('Площадь кухни', ''),
+                        'metro': listing_data.get('Минут метро', '')
                     }
                     return info
                 except Exception as e:
                     print(f"Ошибка при парсинге Cian объявления {url}: {str(e)}")
                     return {
-                        'rooms': 'N/A',
-                        'price': 'N/A',
-                        'floor': 'N/A',
-                        'total_area': 'N/A',
-                        'kitchen_area': 'N/A',
-                        'metro': 'N/A'
+                        'rooms': '',
+                        'price': '',
+                        'floor': '',
+                        'total_area': '',
+                        'kitchen_area': '',
+                        'metro': ''
                     }
                 finally:
                     session.close()
         except Exception as e:
             print(f"Ошибка при извлечении информации об объявлении {url}: {str(e)}")
             return {
-                'rooms': 'N/A',
-                'price': 'N/A',
-                'floor': 'N/A',
-                'total_area': 'N/A',
-                'kitchen_area': 'N/A',
-                'metro': 'N/A'
+                'rooms': '',
+                'price': '',
+                'floor': '',
+                'total_area': '',
+                'kitchen_area': '',
+                'metro': ''
             }
     
     async def generate_html_gallery(self, listing_urls: list[str], user_id: int, subtitle: str = None, listing_comments: list[str] = None) -> str:
@@ -427,15 +511,43 @@ class ListingsProcessor:
                     
                     # Преобразуем данные Avito в формат для отображения
                     listing_data_display = {
-                        'Комнат': listing_data.get('rooms', 'N/A'),
-                        'Цена_raw': listing_data.get('price', 'N/A'),
-                        'Этаж': listing_data.get('floor', 'N/A'),
-                        'Общая площадь': listing_data.get('total_area', 'N/A'),
-                        'Площадь кухни': listing_data.get('kitchen_area', 'N/A'),
-                        'Минут метро': listing_data.get('metro_time', 'N/A')
+                        'Комнат': listing_data.get('rooms', ''),
+                        'Цена_raw': listing_data.get('price', ''),
+                        'Этаж': listing_data.get('floor', ''),
+                        'Общая площадь': listing_data.get('total_area', ''),
+                        'Площадь кухни': listing_data.get('kitchen_area', ''),
+                        'Минут метро': listing_data.get('metro_time', '')
                     }
                     
                     # Для Avito фотографии не извлекаем (требует отдельной логики)
+                    photo_urls = []
+                elif self.is_yandex_url(listing_url):
+                    # Для Yandex Realty используем асинхронный парсинг
+                    listing_data = await self.parse_yandex_listing(listing_url)
+                    if not listing_data:
+                        html_parts.append(f"""
+                        <div class="listing">
+                            <h3>Вариант #{i}</h3>
+                            <p style="color: red;">Ошибка при парсинге Yandex Realty</p>
+                        </div>
+                        """)
+                        continue
+                    
+                    # Сохраняем данные для БД
+                    db_listings.append(listing_data)
+                    
+                    # Преобразуем данные Yandex в формат для отображения
+                    listing_data_display = {
+                        'Комнат': listing_data.get('rooms', ''),
+                        'Цена_raw': listing_data.get('price', ''),
+                        'Этаж': listing_data.get('floor', ''),
+                        'Общая площадь': listing_data.get('area_total', ''),
+                        'Жилая площадь': listing_data.get('living_area', ''),
+                        'Площадь кухни': listing_data.get('kitchen_area', ''),
+                        'Минут метро': listing_data.get('metro_time', '')
+                    }
+                    
+                    # Для Yandex фотографии не извлекаем (требует отдельной логики)
                     photo_urls = []
                 else:
                     # Для Cian используем существующую логику
@@ -450,12 +562,12 @@ class ListingsProcessor:
                     cian_data = {
                         'url': listing_url,
                         'source': 4,  # Cian
-                        'rooms': listing_data.get('Комнат', 'N/A'),
-                        'price': listing_data.get('Цена_raw', 'N/A'),
-                        'floor': listing_data.get('Этаж', 'N/A'),
-                        'total_area': listing_data.get('Общая площадь', 'N/A'),
-                        'kitchen_area': listing_data.get('Площадь кухни', 'N/A'),
-                        'metro_time': listing_data.get('Минут метро', 'N/A'),
+                        'rooms': listing_data.get('Комнат', ''),
+                        'price': listing_data.get('Цена_raw', ''),
+                        'floor': listing_data.get('Этаж', ''),
+                        'total_area': listing_data.get('Общая площадь', ''),
+                        'kitchen_area': listing_data.get('Площадь кухни', ''),
+                        'metro_time': listing_data.get('Минут метро', ''),
                         'photo_urls': photo_urls if photo_urls else []
                     }
                     db_listings.append(cian_data)
@@ -472,11 +584,14 @@ class ListingsProcessor:
                 html_parts.append("")
                 
                 # Добавляем основную информацию
-                html_parts.append(f"<p><strong>Комнат:</strong> {listing_data_display.get('Комнат', 'N/A')}</p>")
-                html_parts.append(f"<p><strong>Цена:</strong> {listing_data_display.get('Цена_raw', 'N/A')}</p>")
-                html_parts.append(f"<p><strong>Этаж:</strong> {listing_data_display.get('Этаж', 'N/A')}</p>")
-                html_parts.append(f"<p><strong>Общая площадь:</strong> {listing_data_display.get('Общая площадь', 'N/A')} м²</p>")
-                html_parts.append(f"<p><strong>Кухня:</strong> {listing_data_display.get('Площадь кухни', 'N/A')} м²</p>")
+                html_parts.append(f"<p><strong>Комнат:</strong> {listing_data_display.get('Комнат', '') or '-'}</p>")
+                html_parts.append(f"<p><strong>Цена:</strong> {listing_data_display.get('Цена_raw', '') or '-'}</p>")
+                html_parts.append(f"<p><strong>Этаж:</strong> {listing_data_display.get('Этаж', '') or '-'}</p>")
+                html_parts.append(f"<p><strong>Общая площадь:</strong> {listing_data_display.get('Общая площадь', '') or '-'} м²</p>")
+                living_area = listing_data_display.get('Жилая площадь', '')
+                if living_area:
+                    html_parts.append(f"<p><strong>Жилая площадь:</strong> {living_area} м²</p>")
+                html_parts.append(f"<p><strong>Кухня:</strong> {listing_data_display.get('Площадь кухни', '') or '-'} м²</p>")
 
                 
                 # Добавляем фотографии (только для Cian)
@@ -503,6 +618,8 @@ class ListingsProcessor:
                 else:
                     if self.is_avito_url(listing_url):
                         html_parts.append('<p class="no-photos">📷 Фотографии Avito (требуют отдельной обработки)</p>')
+                    elif self.is_yandex_url(listing_url):
+                        html_parts.append('<p class="no-photos">📷 Фотографии Yandex Realty (требуют отдельной обработки)</p>')
                     else:
                         html_parts.append('<p class="no-photos">📷 Фотографии не найдены</p>')
                 
@@ -534,7 +651,7 @@ class ListingsProcessor:
         
         return ''.join(html_parts)
     
-    async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False, max_photos_per_listing: int = None, listing_comments: list[str] = None, pre_parsed_data: dict = None) -> tuple[str, list[dict]]:
+    async def generate_html_gallery_embedded(self, listing_urls: list[str], user_id: int, subtitle: str = None, remove_watermarks: bool = False, max_photos_per_listing: int = None, listing_comments: list[str] = None) -> tuple[str, list[dict]]:
         """Генерирует HTML галерею с встроенными Base64 изображениями и возвращает статистику по фото"""
         html_content = f"""
         <!DOCTYPE html>
@@ -877,12 +994,7 @@ class ListingsProcessor:
                 # Парсим объявление в зависимости от источника
                 if self.is_avito_url(listing_url):
                     # Для Avito используем асинхронный парсинг
-                    # Если это первый URL и у нас есть предварительно спарсенные данные, используем их
-                    if i == 1 and pre_parsed_data:
-                        listing_data = pre_parsed_data
-                        print(f"🔄 Используем предварительно спарсенные данные для URL #{i}")
-                    else:
-                        listing_data = await self.parse_avito_listing(listing_url)
+                    listing_data = await self.parse_avito_listing(listing_url)
                     
                     if not listing_data:
                         html_content += f"""
@@ -981,8 +1093,15 @@ class ListingsProcessor:
                             <p><strong>Комнат:</strong> {listing_info.get('rooms', 'N/A')}</p>
                             <p><strong>Цена:</strong> {listing_info.get('price', 'N/A')}</p>
                             <p><strong>Этаж:</strong> {listing_info.get('floor', 'N/A')}</p>
-                            <p><strong>Общая площадь:</strong> {listing_info.get('total_area', 'N/A')} м²</p>
-                            <p><strong>Кухня:</strong> {listing_info.get('kitchen_area', 'N/A')} м²</p>
+                            <p><strong>Общая площадь:</strong> {listing_info.get('total_area', 'N/A')} м²</p>"""
+                
+                # Добавляем жилую площадь, если она доступна
+                if 'living_area' in listing_info and listing_info.get('living_area', 'N/A') != 'N/A':
+                    html_content += f"<p><strong>Жилая площадь:</strong> {listing_info.get('living_area', 'N/A')} м²</p>"
+                
+                html_content += f"<p><strong>Кухня:</strong> {listing_info.get('kitchen_area', 'N/A')} м²</p>"
+                
+                html_content += f"""
                         </div>
                         
 
@@ -1013,6 +1132,8 @@ class ListingsProcessor:
                 if not processed_photos:
                     if self.is_avito_url(listing_url):
                         html_content += '<p>📷 Фотографии Avito не найдены</p>'
+                    elif self.is_yandex_url(listing_url):
+                        html_content += '<p>📷 Фотографии Yandex Realty не найдены</p>'
                     else:
                         html_content += '<p>📷 Фотографии не найдены</p>'
                 
@@ -1251,7 +1372,7 @@ class ListingsProcessor:
         return html_content, photo_stats
 
     async def parse_listings_batch(self, listing_urls: list[str]) -> list[dict]:
-        """Универсальный метод для парсинга списка объявлений с Cian и Avito"""
+        """Универсальный метод для парсинга списка объявлений с Cian, Avito и Yandex Realty"""
         parsed_listings = []
         
         for i, url in enumerate(listing_urls, 1):
@@ -1280,6 +1401,16 @@ class ListingsProcessor:
                         print(f"✅ Объявление Cian успешно спарсено")
                     else:
                         print(f"❌ Не удалось спарсить объявление Cian")
+                elif self.is_yandex_url(url):
+                    print(f"🏠 Источник: Yandex Realty")
+                    listing_data = await self.parse_yandex_listing(url)
+                    if listing_data:
+                        # Добавляем источник
+                        listing_data['source'] = 3  # Yandex Realty
+                        parsed_listings.append(listing_data)
+                        print(f"✅ Объявление Yandex Realty успешно спарсено")
+                    else:
+                        print(f"❌ Не удалось спарсить объявление Yandex Realty")
                 else:
                     print(f"⚠️ Неизвестный источник ссылки: {url}")
                 
@@ -1331,43 +1462,82 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
         try:
             if processor.is_avito_url(url):
                 print(f"🏠 Парсим объявление Avito: {url}")
-                # Для Avito используем асинхронный парсинг
-                avito_data = await processor.parse_avito_listing(url)
+                # Для Avito используем асинхронный парсинг без фото
+                avito_data = await processor.parse_avito_listing(url, skip_photos=True)
                 if avito_data:
                     # Преобразуем данные Avito в формат для Excel
                     excel_data = {
                         'URL': url,
-                        'Комнат': avito_data.get('rooms', 'N/A'),
-                        'Цена_raw': avito_data.get('price', 'N/A'),
-                        'Этаж': avito_data.get('floor', 'N/A'),
-                        'Общая площадь': avito_data.get('total_area', 'N/A'),
-                        'Жилая площадь': avito_data.get('living_area', 'N/A'),
-                        'Площадь кухни': avito_data.get('kitchen_area', 'N/A'),
-                        'Санузел': avito_data.get('bathroom', 'N/A'),
-                        'Балкон/лоджия': avito_data.get('balcony', 'N/A'),
-                        'Вид из окон': avito_data.get('windows', 'N/A'),
-                        'Ремонт': avito_data.get('renovation', 'N/A'),
-                        'Год постройки': avito_data.get('construction_year', 'N/A'),
-                        'Строительная серия': 'N/A',  # Пусто в Avito
-                        'Тип дома': avito_data.get('house_type', 'N/A'),
-                        'Тип перекрытий': 'N/A',  # Пусто в Avito
-                        'Пассажирских лифтов': avito_data.get('passenger_elevator', 'N/A'),
-                        'Грузовых лифтов': avito_data.get('cargo_elevator', 'N/A'),
-                        'Парковка': avito_data.get('parking', 'N/A'),
-                        'Газоснабжение': avito_data.get('gas_supply', 'N/A'),  # Берем из "В доме"
-                        'Высота потолков': avito_data.get('ceiling_height', 'N/A'),
-                        'Мебель': avito_data.get('furniture', 'N/A'),
-                        'Способ продажи': avito_data.get('sale_type', 'N/A'),
-                        'Просмотров сегодня': avito_data.get('today_views', 'N/A'),
-                        'Адрес': avito_data.get('address', 'N/A'),
-                        'Минут метро': avito_data.get('metro_time', 'N/A'),
-                        'Метки': avito_data.get('tags', 'N/A'),
+                        'Комнат': avito_data.get('rooms', ''),
+                        'Цена_raw': avito_data.get('price', ''),
+                        'Этаж': avito_data.get('floor', ''),
+                        'Общая площадь': avito_data.get('total_area', ''),
+                        'Жилая площадь': avito_data.get('living_area', ''),
+                        'Площадь кухни': avito_data.get('kitchen_area', ''),
+                        'Санузел': avito_data.get('bathroom', ''),
+                        'Балкон/лоджия': avito_data.get('balcony', ''),
+                        'Вид из окон': avito_data.get('windows', ''),
+                        'Ремонт': avito_data.get('renovation', ''),
+                        'Год постройки': avito_data.get('construction_year', ''),
+                        'Строительная серия': '',  # Пусто в Avito
+                        'Тип дома': avito_data.get('house_type', ''),
+                        'Тип перекрытий': '',  # Пусто в Avito
+                        'Пассажирских лифтов': avito_data.get('passenger_elevator', ''),
+                        'Грузовых лифтов': avito_data.get('cargo_elevator', ''),
+                        'Парковка': avito_data.get('parking', ''),
+                        'Газоснабжение': avito_data.get('gas_supply', ''),  # Берем из "В доме"
+                        'Высота потолков': avito_data.get('ceiling_height', ''),
+                        'Мебель': avito_data.get('furniture', ''),
+                        'Способ продажи': avito_data.get('sale_type', ''),
+                        'Просмотров сегодня': avito_data.get('today_views', ''),
+                        'Адрес': avito_data.get('address', ''),
+                        'Минут метро': avito_data.get('metro_time', ''),
+                        'Метки': avito_data.get('tags', ''),
                         'Статус': 'Активно',
                         'Тип жилья': 'Квартира',
                     }
                     rows.append(excel_data)
                 else:
                     print(f"❌ Не удалось спарсить объявление Avito: {url}")
+            elif processor.is_yandex_url(url):
+                print(f"🏠 Парсим объявление Yandex Realty: {url}")
+                # Для Yandex Realty используем асинхронный парсинг
+                yandex_data = await processor.parse_yandex_listing(url)
+                if yandex_data:
+                    # Преобразуем данные Yandex в формат для Excel
+                    excel_data = {
+                        'URL': url,
+                        'Комнат': yandex_data.get('rooms', ''),
+                        'Цена_raw': yandex_data.get('price', ''),
+                        'Этаж': yandex_data.get('floor', ''),
+                        'Общая площадь': yandex_data.get('area_total', ''),
+                        'Жилая площадь': yandex_data.get('living_area', ''),
+                        'Площадь кухни': yandex_data.get('kitchen_area', ''),
+                        'Санузел': yandex_data.get('bathroom', ''),
+                        'Балкон/лоджия': yandex_data.get('balcony', ''),
+                        'Вид из окон': yandex_data.get('view', ''),
+                        'Ремонт': yandex_data.get('renovation', ''),
+                        'Год постройки': yandex_data.get('year_built', ''),
+                        'Строительная серия': '',  # Yandex не предоставляет
+                        'Тип дома': yandex_data.get('house_type', ''),
+                        'Тип перекрытий': '',  # Yandex не предоставляет
+                        'Пассажирских лифтов': '',
+                        'Грузовых лифтов': '',
+                        'Парковка': '',
+                        'Газоснабжение': '',
+                        'Высота потолков': '',
+                        'Мебель': '',
+                        'Способ продажи': '',
+                        'Просмотров сегодня': yandex_data.get('views', ''),
+                        'Адрес': yandex_data.get('address', ''),
+                        'Минут метро': yandex_data.get('metro_time', ''),
+                        'Метки': '',
+                        'Статус': yandex_data.get('status', 'Активно'),
+                        'Тип жилья': 'Квартира',
+                    }
+                    rows.append(excel_data)
+                else:
+                    print(f"❌ Не удалось спарсить объявление Yandex Realty: {url}")
             else:
                 print(f"🏠 Парсим объявление Cian: {url}")
                 # Для Cian используем существующую логику
@@ -1385,8 +1555,20 @@ async def export_listings_to_excel(listing_urls: list[str], user_id: int, output
     # Обработка цен
     if 'Цена_raw' in df.columns:
         df['Цена'] = df['Цена_raw']
-        df = df.sort_values('Цена_raw')
-        df.drop('Цена_raw', axis=1, inplace=True)
+        
+        # Преобразуем строки в числа для сортировки
+        def convert_price_for_sorting(price):
+            if pd.isna(price) or price == '':
+                return 0
+            if isinstance(price, str):
+                return 0
+            if isinstance(price, (int, float)):
+                return price
+            return 0
+        
+        df['Цена_raw_numeric'] = df['Цена_raw'].apply(convert_price_for_sorting)
+        df = df.sort_values('Цена_raw_numeric')
+        df.drop(['Цена_raw', 'Цена_raw_numeric'], axis=1, inplace=True)
 
     # Порядок колонок
     ordered = [
@@ -1444,7 +1626,24 @@ def parse_listing(url: str, session: requests.Session) -> dict:
         data['Статус'] = None
     elif soup.find(string=re.compile(r"Объявление снято", re.IGNORECASE)):
         data['Статус'] = 'Снято'
-    labels = [span.get_text(strip=True) for span in soup.select('div[data-name="LabelsLayoutNew"] > span span:last-of-type')]
+    # Метки (улучшенный селектор для предотвращения дубликатов)
+    labels = []
+    # Пробуем разные селекторы для меток
+    label_selectors = [
+        'div[data-name="LabelsLayoutNew"] > span[class]',  # Прямые дочерние спаны с классами
+        'div[data-name="LabelsLayoutNew"] span[data-testid]',  # Спаны с data-testid
+        'div[data-name="LabelsLayoutNew"] span:not(:has(span))'  # Листовые спаны (без вложенных)
+    ]
+    
+    for selector in label_selectors:
+        try:
+            spans = soup.select(selector)
+            if spans:
+                labels = [span.get_text(strip=True) for span in spans if span.get_text(strip=True)]
+                break  # Используем первый работающий селектор
+        except Exception:
+            continue
+            
     data['Метки'] = '; '.join(labels) if labels else None
     h1 = soup.find('h1')
     if h1:
@@ -1529,6 +1728,7 @@ def extract_urls(raw_input: str) -> tuple[list[str], int]:
     # Анализируем источники
     avito_count = 0
     cian_count = 0
+    yandex_count = 0
     unknown_count = 0
     
     for url in urls:
@@ -1536,16 +1736,20 @@ def extract_urls(raw_input: str) -> tuple[list[str], int]:
             avito_count += 1
         elif processor.is_cian_url(url):
             cian_count += 1
+        elif processor.is_yandex_url(url):
+            yandex_count += 1
         else:
             unknown_count += 1
     
     # Выводим статистику по источникам
-    if avito_count > 0 or cian_count > 0:
+    if avito_count > 0 or cian_count > 0 or yandex_count > 0:
         print(f"🔍 Анализ ссылок:")
         if avito_count > 0:
             print(f"   🏠 Avito: {avito_count}")
         if cian_count > 0:
             print(f"   🏠 Cian: {cian_count}")
+        if yandex_count > 0:
+            print(f"   🏠 Yandex Realty: {yandex_count}")
         if unknown_count > 0:
             print(f"   ⚠️ Неизвестные: {unknown_count}")
     

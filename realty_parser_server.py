@@ -25,6 +25,14 @@ except ImportError:
     AVITO_AVAILABLE = False
     print("⚠️ Модуль avito_parser_integration не найден, парсинг Avito недоступен")
 
+# Импортируем парсер Yandex
+try:
+    from yandex_parser_integration import YandexCardParser
+    YANDEX_AVAILABLE = True
+except ImportError:
+    YANDEX_AVAILABLE = False
+    print("⚠️ Модуль yandex_parser_integration не найден, парсинг Yandex недоступен")
+
 # Заголовки для HTTP-запросов
 HEADERS = {
     'User-Agent': (
@@ -59,7 +67,7 @@ class PropertyData:
     # Расположение
     address: Optional[str] = None
     metro_station: Optional[str] = None
-    metro_time: Optional[int] = None
+    metro_time: Optional[Union[int, str]] = None  # Can be int (minutes) or str (formatted like "6 Текстильщики")
     
     # Дополнительно
     tags: Optional[List[str]] = None
@@ -67,11 +75,10 @@ class PropertyData:
     photo_urls: Optional[List[str]] = None
     
     # Метаданные
-    source: Optional[str] = None  # 'avito' или 'cian'
+    source: Optional[str] = None  # 'avito', 'cian', 'yandex'
     url: Optional[str] = None
     status: Optional[str] = None
     views_today: Optional[int] = None
-    total_views: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Преобразует в словарь для JSON"""
@@ -110,25 +117,56 @@ class RealtyParserAPI:
         """Определяет, является ли ссылка ссылкой на Cian"""
         return 'cian.ru' in url.lower()
     
+    def is_yandex_url(self, url: str) -> bool:
+        """Определяет, является ли ссылка ссылкой на Yandex Realty"""
+        return 'realty.yandex.ru' in url.lower()
+    
+    def _extract_station_from_metro_time(self, metro_time: str) -> Optional[str]:
+        """Извлекает название станции из формата '6 Текстильщики'"""
+        if not metro_time or not isinstance(metro_time, str):
+            return None
+        
+        parts = metro_time.strip().split(' ', 1)
+        if len(parts) >= 2 and parts[0].isdigit():
+            return parts[1]  # Название станции
+        return None
+    
+    def _extract_minutes_from_metro_time(self, metro_time: str) -> Optional[int]:
+        """Извлекает минуты из формата '6 Текстильщики'"""
+        if not metro_time or not isinstance(metro_time, str):
+            return None
+        
+        parts = metro_time.strip().split(' ', 1)
+        if len(parts) >= 1 and parts[0].isdigit():
+            try:
+                return int(parts[0])  # Количество минут
+            except ValueError:
+                return None
+        return None
+    
     def get_url_source(self, url: str) -> str:
         """Возвращает источник ссылки"""
         if self.is_avito_url(url):
             return 'avito'
         elif self.is_cian_url(url):
             return 'cian'
+        elif self.is_yandex_url(url):
+            return 'yandex'
         else:
             return 'unknown'
     
-    async def parse_property(self, url: str) -> Optional[PropertyData]:
+    async def parse_property(self, url: str, skip_photos: bool = True) -> Optional[PropertyData]:
         """
         Универсальный метод для парсинга объявлений
         Возвращает структурированные данные PropertyData
         """
         try:
             if self.is_avito_url(url):
-                return await self._parse_avito_property(url)
+                return await self._parse_avito_property(url, skip_photos=skip_photos)
             elif self.is_cian_url(url):
                 return await self._parse_cian_property(url)
+            elif self.is_yandex_url(url):
+                return await self._parse_yandex_property(url)
             else:
                 print(f"⚠️ Неизвестный источник ссылки: {url}")
                 return None
@@ -136,7 +174,7 @@ class RealtyParserAPI:
             print(f"❌ Ошибка парсинга {url}: {e}")
             return None
     
-    async def parse_properties_batch(self, urls: List[str]) -> List[PropertyData]:
+    async def parse_properties_batch(self, urls: List[str], skip_photos: bool = True) -> List[PropertyData]:
         """
         Пакетный парсинг множественных объявлений
         Возвращает список PropertyData объектов
@@ -145,7 +183,7 @@ class RealtyParserAPI:
         for i, url in enumerate(urls, 1):
             try:
                 print(f"🔄 Парсим объявление {i}/{len(urls)}: {url}")
-                property_data = await self.parse_property(url)
+                property_data = await self.parse_property(url, skip_photos=skip_photos)
                 if property_data:
                     results.append(property_data)
                     print(f"✅ Объявление успешно спарсено")
@@ -158,7 +196,7 @@ class RealtyParserAPI:
         print(f"📊 Всего успешно спарсено: {len(results)} из {len(urls)}")
         return results
     
-    async def _parse_avito_property(self, url: str) -> Optional[PropertyData]:
+    async def _parse_avito_property(self, url: str, skip_photos: bool = True) -> Optional[PropertyData]:
         """Парсит объявление с Avito"""
         if not AVITO_AVAILABLE:
             print("❌ Парсер Avito недоступен")
@@ -167,8 +205,8 @@ class RealtyParserAPI:
         try:
             print(f"🏠 Парсим объявление Avito: {url}")
             
-            # Создаем парсер Avito
-            parser = AvitoCardParser()
+            # Создаем парсер Avito с параметром skip_photos
+            parser = AvitoCardParser(skip_photos=skip_photos)
             
             # Парсим полную страницу объявления
             parsed_data = parser.parse_avito_page(url)
@@ -199,16 +237,15 @@ class RealtyParserAPI:
                 ceiling_height=db_data.get('ceiling_height'),
                 furniture=db_data.get('furniture'),
                 address=db_data.get('address'),
-                metro_station=db_data.get('metro_station'),
-                metro_time=db_data.get('metro_time'),
+                metro_station=self._extract_station_from_metro_time(db_data.get('metro_time')),  # Extract station name from metro_time
+                metro_time=self._extract_minutes_from_metro_time(db_data.get('metro_time')),      # Extract minutes from metro_time
                 tags=db_data.get('tags'),
                 description=db_data.get('description'),
                 photo_urls=db_data.get('photo_urls'),
                 source='avito',
                 url=url,
                 status='active',
-                views_today=db_data.get('today_views'),
-                total_views=db_data.get('total_views')
+                views_today=db_data.get('today_views')
             )
             
             print(f"✅ Объявление Avito успешно спарсено")
@@ -220,6 +257,68 @@ class RealtyParserAPI:
         finally:
             # Закрываем браузер
             if 'parser' in locals() and parser.driver:
+                try:
+                    parser.cleanup()
+                except:
+                    pass
+    
+    async def _parse_yandex_property(self, url: str) -> Optional[PropertyData]:
+        """Парсит объявление с Yandex Realty"""
+        if not YANDEX_AVAILABLE:
+            print("❌ Парсер Yandex недоступен")
+            return None
+        
+        try:
+            print(f"🏠 Парсим объявление Yandex Realty: {url}")
+            
+            # Создаем парсер Yandex
+            parser = YandexCardParser()
+            
+            # Парсим полную страницу объявления
+            parsed_data = parser.parse_yandex_page(url)
+            if not parsed_data:
+                print("❌ Не удалось спарсить данные объявления Yandex Realty")
+                return None
+            
+            # Преобразуем данные в формат для БД
+            db_data = parser.prepare_data_for_db(parsed_data)
+            if not db_data:
+                print("❌ Не удалось подготовить данные для БД")
+                return None
+            
+            # Создаем структурированный объект
+            property_data = PropertyData(
+                rooms=db_data.get('rooms'),
+                price=db_data.get('price'),
+                total_area=db_data.get('area_total'),
+                living_area=db_data.get('living_area'),
+                kitchen_area=db_data.get('kitchen_area'),
+                floor=db_data.get('floor'),
+                total_floors=db_data.get('floor_total'),
+                bathroom=db_data.get('bathroom'),
+                balcony=db_data.get('balcony'),
+                renovation=db_data.get('renovation'),
+                construction_year=db_data.get('year_built'),
+                house_type=db_data.get('house_type'),
+                address=db_data.get('address'),
+                metro_station=self._extract_station_from_metro_time(db_data.get('metro_time')),  # Extract station name from metro_time
+                metro_time=self._extract_minutes_from_metro_time(db_data.get('metro_time')),      # Extract minutes from metro_time
+                description=db_data.get('description'),
+                source='yandex',
+                url=url,
+                status=db_data.get('status', 'active'),
+                views_today=db_data.get('views')  # Yandex views are today's views, not total
+            )
+            
+            print(f"✅ Объявление Yandex Realty успешно спарсено")
+            return property_data
+            
+        except Exception as e:
+            print(f"❌ Ошибка парсинга объявления Yandex Realty: {e}")
+            return None
+        finally:
+            # Закрываем браузер
+            if 'parser' in locals():
                 try:
                     parser.cleanup()
                 except:
@@ -259,16 +358,15 @@ class RealtyParserAPI:
                 ceiling_height=data.get('Высота потолков'),
                 furniture=data.get('Мебель'),
                 address=data.get('Адрес'),
-                metro_station=data.get('Метро'),
-                metro_time=data.get('Минут метро'),
+                metro_station=self._extract_station_from_metro_time(data.get('Минут метро')),  # Extract station name from metro_time format
+                metro_time=self._extract_minutes_from_metro_time(data.get('Минут метро')),      # Extract minutes from metro_time format
                 tags=data.get('Метки'),
                 description=data.get('Описание'),
                 photo_urls=data.get('photo_urls', []),
                 source='cian',
                 url=url,
                 status=data.get('Статус', 'active'),
-                views_today=data.get('Просмотров сегодня'),
-                total_views=data.get('Всего просмотров')
+                views_today=data.get('Просмотров сегодня')
             )
             
             print(f"✅ Объявление Cian успешно спарсено")
@@ -290,8 +388,24 @@ class RealtyParserAPI:
         elif soup.find(string=re.compile(r"Объявление снято", re.IGNORECASE)):
             data['Статус'] = 'Снято'
         
-        # Метки
-        labels = [span.get_text(strip=True) for span in soup.select('div[data-name="LabelsLayoutNew"] > span span:last-of-type')]
+        # Метки (улучшенный селектор для предотвращения дубликатов)
+        labels = []
+        # Пробуем разные селекторы для меток
+        label_selectors = [
+            'div[data-name="LabelsLayoutNew"] > span[class]',  # Прямые дочерние спаны с классами
+            'div[data-name="LabelsLayoutNew"] span[data-testid]',  # Спаны с data-testid
+            'div[data-name="LabelsLayoutNew"] span:not(:has(span))'  # Листовые спаны (без вложенных)
+        ]
+        
+        for selector in label_selectors:
+            try:
+                spans = soup.select(selector)
+                if spans:
+                    labels = [span.get_text(strip=True) for span in spans if span.get_text(strip=True)]
+                    break  # Используем первый работающий селектор
+            except Exception:
+                continue
+                
         data['Метки'] = '; '.join(labels) if labels else None
         
         # Количество комнат
@@ -560,8 +674,9 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "realty-parser-api",
-        "avito_available": parser.is_avito_url("https://avito.ru"),
-        "cian_available": parser.is_cian_url("https://cian.ru")
+        "avito_available": AVITO_AVAILABLE,
+        "cian_available": True,
+        "yandex_available": YANDEX_AVAILABLE
     }
 
 @app.get("/api/sources")
@@ -580,6 +695,12 @@ async def get_supported_sources():
                 "domain": "cian.ru",
                 "available": True,
                 "source_id": "cian"
+            },
+            {
+                "name": "Yandex Realty", 
+                "domain": "realty.yandex.ru",
+                "available": YANDEX_AVAILABLE,
+                "source_id": "yandex"
             }
         ]
     }

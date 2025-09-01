@@ -577,6 +577,79 @@ async def complete_parsing_session(session_id: int):
         except Exception as e:
             print(f"[PROGRESS] Ошибка завершения сессии: {e}")
 
+async def check_session_time_limit(property_type: int, time_period: int = None, source: int = 4, min_hours_between_sessions: int = 6) -> tuple:
+    """Проверяет, можно ли запустить новую сессию парсинга с учетом временных ограничений.
+    
+    Args:
+        property_type: Тип недвижимости
+        time_period: Период времени (может быть None)
+        source: Источник данных (1=AVITO, 4=CIAN)
+        min_hours_between_sessions: Минимальное количество часов между сессиями
+        
+    Returns:
+        tuple: (can_start: bool, last_session: dict or None, hours_since_completion: float or None)
+    """
+    pool = await _get_cian_pool()
+    async with pool.acquire() as conn:
+        try:
+            # Ищем последнюю завершенную сессию
+            if time_period is None:
+                last_session = await conn.fetchrow("""
+                    SELECT id, current_metro_id, total_metros, processed_metros, status, time_upd, created_at
+                    FROM system.parsing_progress 
+                    WHERE property_type = $1 AND time_period IS NULL AND source = $2 AND status = 'completed'
+                    ORDER BY time_upd DESC 
+                    LIMIT 1
+                """, property_type, source)
+            else:
+                last_session = await conn.fetchrow("""
+                    SELECT id, current_metro_id, total_metros, processed_metros, status, time_upd, created_at
+                    FROM system.parsing_progress 
+                    WHERE property_type = $1 AND time_period = $2 AND source = $3 AND status = 'completed'
+                    ORDER BY time_upd DESC 
+                    LIMIT 1
+                """, property_type, time_period, source)
+            
+            source_name = "CIAN" if source == 4 else "AVITO" if source == 1 else f"источник {source}"
+            
+            if not last_session:
+                print(f"[SESSION_CHECK] Завершенных сессий для {source_name} не найдено - можно начинать")
+                return True, None, None
+            
+            # Вычисляем время, прошедшее с окончания последней сессии
+            from datetime import datetime
+            now = datetime.now()
+            last_completion = last_session['time_upd']
+            
+            # Если time_upd is timezone-aware, делаем now тоже timezone-aware
+            if last_completion.tzinfo is not None:
+                import pytz
+                if now.tzinfo is None:
+                    now = pytz.timezone('Europe/Moscow').localize(now)
+            else:
+                # Если time_upd is timezone-naive, убираем timezone из now
+                if now.tzinfo is not None:
+                    now = now.replace(tzinfo=None)
+            
+            time_diff = now - last_completion
+            hours_since_completion = time_diff.total_seconds() / 3600
+            
+            can_start = hours_since_completion >= min_hours_between_sessions
+            
+            print(f"[SESSION_CHECK] Последняя сессия {source_name} завершена {hours_since_completion:.1f} часов назад")
+            print(f"[SESSION_CHECK] Минимальный интервал: {min_hours_between_sessions} часов")
+            print(f"[SESSION_CHECK] Можно запускать новую сессию: {'Да' if can_start else 'Нет'}")
+            
+            if not can_start:
+                remaining_hours = min_hours_between_sessions - hours_since_completion
+                print(f"[SESSION_CHECK] До следующего запуска осталось: {remaining_hours:.1f} часов")
+            
+            return can_start, dict(last_session), hours_since_completion
+            
+        except Exception as e:
+            print(f"[SESSION_CHECK] Ошибка проверки временных ограничений: {e}")
+            return True, None, None  # В случае ошибки разрешаем запуск
+
 async def get_last_parsing_progress(property_type: int, time_period: int = None, source: int = 4) -> dict:
     """Получает последний прогресс парсинга для указанных параметров. Ищет только по указанному source."""
     pool = await _get_cian_pool()

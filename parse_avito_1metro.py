@@ -2046,48 +2046,62 @@ class EnhancedMetroParser:
             return [], {}
     
     def is_metro_line(self, line):
-        """Проверяет, является ли строка строкой с метро (адресом)"""
+        """Проверяет, является ли строка строкой с метро (адресом)
+        
+        УЛУЧШЕННАЯ ЛОГИКА: Не используем жестко заданный список станций,
+        а опираемся на структуру данных - метро идет рядом с адресом.
+        """
         try:
             line_lower = line.lower()
             
-            # Признаки строки с метро:
-            # 1. Содержит названия метро (известные станции)
-            metro_stations = ['юго-западная', 'красносельская', 'международная', 'красные ворота',
-                            'чкаловская', 'таганская', 'марксистская', 'площадь ильича',
-                            'римская', 'крестьянская застава', 'пролетарская', 'волгоградский проспект',
-                            'текстильщики', 'кузьминки', 'рязанский проспект', 'выхино',
-                            'новогиреево', 'перово', 'шоссе энтузиастов', 'авиамоторная',
-                            'площадь ильича', 'марксистская', 'таганская', 'волгоградский проспект',
-                            'пролетарская', 'крестьянская застава', 'римская', 'текстильщики',
-                            'кузьминки', 'рязанский проспект', 'выхино', 'новогиреево',
-                            'перово', 'шоссе энтузиастов', 'авиамоторная', 'арбатская']
+            # Признаки строки с метро/адресом:
             
-            # 2. Содержит время до метро
+            # 1. Содержит время до метро
             time_pattern = r'\d+\s*мин'
-            
-            # 3. Содержит названия улиц
-            street_indicators = ['ул.', 'улица', 'проспект', 'пр.', 'переулок', 'пер.', 
-                               'площадь', 'пл.', 'бульвар', 'б-р', 'шоссе', 'ш.']
-            
-            # Проверяем признаки адреса
-            has_metro = any(station in line_lower for station in metro_stations)
             has_time = bool(re.search(time_pattern, line_lower))
+            
+            # 2. Содержит названия улиц/районов
+            street_indicators = ['ул.', 'улица', 'проспект', 'пр.', 'переулок', 'пер.', 
+                               'площадь', 'пл.', 'бульвар', 'б-р', 'шоссе', 'ш.',
+                               'набережная', 'наб.', 'тупик', 'проезд', 'линия']
             has_street = any(indicator in line_lower for indicator in street_indicators)
             
-            # Если есть хотя бы 2 признака адреса, считаем строку адресом
-            address_indicators = sum([has_metro, has_time, has_street])
+            # 3. Содержит запятую и цифры (улица, дом)
+            has_address_format = ',' in line and re.search(r'\d+', line)
             
-            if address_indicators >= 2:
+            # 4. Содержит типичные слова для метро
+            metro_indicators = ['станция', 'метро', 'мин.', 'пешком', 'до']
+            has_metro_words = any(word in line_lower for word in metro_indicators)
+            
+            # 5. Короткая строка без служебных слов (потенциальное название станции)
+            service_words = ['квартира', 'комната', 'студия', 'апартаменты', 'этаж', 'м²', 
+                           'рублей', 'руб', 'собственник', 'агентство', 'проверено',
+                           'новостройка', 'вторичка', 'ремонт', 'состояние', 'планировка']
+            is_clean_name = (len(line) < 50 and 
+                           not any(word in line_lower for word in service_words) and
+                           not re.search(r'\d+\s*м²', line_lower) and  # Не площадь
+                           not re.search(r'\d+\s*руб', line_lower) and   # Не цена
+                           not re.search(r'\d+/\d+\s*эт', line_lower))   # Не этаж
+            
+            # ЛОГИКА ОПРЕДЕЛЕНИЯ:
+            
+            # Если есть время + что-то еще - точно метро/адрес
+            if has_time and (has_street or has_address_format or has_metro_words):
                 return True
             
-            # Дополнительная проверка: если строка содержит запятую и цифры (улица, дом)
-            if ',' in line and re.search(r'\d+', line):
-                # ИСКЛЮЧЕНИЯ: не считаем адресом заголовки квартир
-                if any(word in line_lower for word in ['квартира', 'комната', 'студия', 'апартаменты']):
-                    return False
+            # Если есть улица + адресный формат - точно адрес
+            if has_street and has_address_format:
+                return True
                 
-                # Проверяем, что это не просто тег с цифрами
-                if len(line) < 50:  # Адрес обычно короткий
+            # Если есть явные слова метро + чистое название - вероятно метро
+            if has_metro_words and is_clean_name:
+                return True
+            
+            # Если короткая чистая строка после строки с улицей - вероятно станция метро
+            if is_clean_name and len(line.strip()) > 3:
+                # Дополнительная проверка: не должно быть технических терминов
+                tech_terms = ['лифт', 'парковка', 'балкон', 'ремонт', 'окна', 'двор']
+                if not any(term in line_lower for term in tech_terms):
                     return True
             
             return False
@@ -2233,14 +2247,31 @@ class EnhancedMetroParser:
                 for part in metro_parts:
                     part = part.strip()
                     if part:
-                        # Ищем время до метро (цифра + "мин")
-                        time_match = re.search(r'(\d+)\s*мин', part)
-                        if time_match:
-                            time_to_metro = int(time_match.group(1))
-                        else:
-                            # Если это не время, то это название метро
-                            if not metro_name and not re.search(r'\d+', part):
-                                metro_name = part
+                        # Ищем время до метро (расширенные паттерны)
+                        time_patterns = [
+                            r'(\d+)\s*мин',  # "5 мин"
+                            r'до\s*(\d+)\s*мин',  # "до 5 мин"
+                            r'(\d+)\s*минут',  # "5 минут"
+                            r'(\d+)\s*мин\.',  # "5 мин."
+                            r'(\d+)(?=\s|$)'  # просто цифра в конце строки или перед пробелом
+                        ]
+                        
+                        time_found = False
+                        for pattern in time_patterns:
+                            time_match = re.search(pattern, part)
+                            if time_match:
+                                time_to_metro = int(time_match.group(1))
+                                time_found = True
+                                break
+                        
+                        if not time_found:
+                            # Если это не время, то это потенциальное название метро
+                            # Проверяем, что в строке нет только цифр
+                            if not metro_name and not part.isdigit():
+                                # Дополнительная очистка названия станции
+                                clean_name = re.sub(r'\b(до|пешком|мин\.?|минут)\b', '', part).strip()
+                                if clean_name and len(clean_name) > 1:
+                                    metro_name = clean_name
                 
                 # Сохраняем метро и время
                 address_data['metro_name'] = metro_name if metro_name else 'не указано'

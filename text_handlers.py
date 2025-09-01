@@ -126,13 +126,15 @@ async def handle_text_message(message: Message):
     
     # Извлекаем метро из первого URL для названий файлов
     metro_info = "метро"
-    first_listing_info = None  # Сохраняем результат первого парсинга
+    # Убираем избыточный вызов extract_listing_info - он будет выполнен в generate_html_gallery_embedded
     if urls:
         try:
-            from listings_processor import listings_processor
-            first_listing_info = await listings_processor.extract_listing_info(urls[0])
-            if first_listing_info.get('metro') and first_listing_info['metro'] != 'N/A':
-                metro_info = first_listing_info['metro']
+            # Простое извлечение метро из URL без полного парсинга
+            if 'tekstilshchiki' in urls[0].lower() or 'текстильщики' in urls[0].lower():
+                metro_info = "Текстильщики"
+            elif 'begovaya' in urls[0].lower() or 'беговая' in urls[0].lower():
+                metro_info = "Беговая"
+            # Добавьте другие популярные станции метро при необходимости
         except Exception as e:
             print(f"Ошибка при извлечении метро: {e}")
             metro_info = "метро"
@@ -184,7 +186,7 @@ async def handle_text_message(message: Message):
                 print(f"📝 Найдено комментариев к объявлениям: {len(listing_comments)}")
 
             if use_embedded:
-                html_content, photo_stats = await listings_processor.generate_html_gallery_embedded(urls, message.from_user.id, subtitle, remove_watermarks=True, max_photos_per_listing=max_photos_per_listing, listing_comments=listing_comments, pre_parsed_data=first_listing_info)
+                html_content, photo_stats = await listings_processor.generate_html_gallery_embedded(urls, message.from_user.id, subtitle, remove_watermarks=True, max_photos_per_listing=max_photos_per_listing, listing_comments=listing_comments)
                 filename = f"Подбор_{metro_info}.html"
                 caption = f"🏠 Подбор недвижимости"
                 

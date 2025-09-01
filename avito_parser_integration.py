@@ -23,9 +23,10 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 class AvitoCardParser:
     """Парсер карточек объявлений Avito для listings_processor"""
     
-    def __init__(self):
+    def __init__(self, skip_photos=False):
         self.driver = None
         self.cookies_file = "avito_cookies.json"
+        self.skip_photos = skip_photos  # Новый параметр для пропуска фото
         
     def load_cookies(self):
         """Загружает cookies для Avito"""
@@ -79,6 +80,11 @@ class AvitoCardParser:
             print("🔧 Создаем браузер...")
             self.driver = webdriver.Chrome(options=options)
             
+            # Настраиваем таймауты
+            self.driver.implicitly_wait(10)  # Неявное ожидание элементов
+            self.driver.set_page_load_timeout(30)  # Таймаут загрузки страницы
+            self.driver.set_script_timeout(30)  # Таймаут выполнения скриптов
+            
             # Убираем webdriver
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
@@ -89,7 +95,7 @@ class AvitoCardParser:
             return False
     
     def apply_cookies(self, cookies_data):
-        """Применяет cookies к драйверу"""
+        """Применяет cookies к драйверу с улучшенной обработкой таймаутов"""
         try:
             if not cookies_data or 'cookies' not in cookies_data:
                 print("❌ Данные cookies отсутствуют или некорректны")
@@ -97,47 +103,68 @@ class AvitoCardParser:
             
             print(f"📊 Применяем cookies: {len(cookies_data['cookies'])}")
             
-            # Сначала переходим на домен
-            print("🌐 Переходим на AVITO...")
-            self.driver.get("https://avito.ru")
-            time.sleep(3)
+            # Устанавливаем короткий таймаут для загрузки страницы
+            original_timeout = self.driver.timeouts.page_load
+            self.driver.set_page_load_timeout(15)  # Сокращаем до 15 секунд
             
-            # Применяем cookies
-            applied_count = 0
-            for cookie in cookies_data['cookies']:
+            try:
+                # Переходим на главную страницу Avito с коротким таймаутом
+                print("🌐 Переходим на AVITO...")
                 try:
-                    if 'name' in cookie and 'value' in cookie:
-                        cookie_dict = {
-                            'name': cookie['name'],
-                            'value': cookie['value'],
-                            'domain': cookie.get('domain', ''),
-                            'path': cookie.get('path', '/')
-                        }
-                        
-                        if cookie.get('expiry'):
-                            cookie_dict['expiry'] = cookie['expiry']
-                        if cookie.get('secure'):
-                            cookie_dict['secure'] = cookie['secure']
-                        if cookie.get('httpOnly'):
-                            cookie_dict['httpOnly'] = cookie['httpOnly']
-                        
-                        self.driver.add_cookie(cookie_dict)
-                        applied_count += 1
-                        
+                    self.driver.get("https://avito.ru")
                 except Exception as e:
-                    continue
-            
-            print(f"✅ Применено cookies: {applied_count}")
-            
-            # Обновляем страницу с примененными cookies
-            self.driver.refresh()
-            time.sleep(3)
-            
-            return applied_count > 0
+                    print(f"⚠️ Таймаут загрузки главной страницы: {e}")
+                    # Продолжаем работу, браузер может уже быть на Avito
+                
+                # Небольшая пауза для стабилизации
+                time.sleep(2)
+                
+                # Применяем cookies
+                applied_count = 0
+                for cookie in cookies_data['cookies']:
+                    try:
+                        if 'name' in cookie and 'value' in cookie:
+                            cookie_dict = {
+                                'name': cookie['name'],
+                                'value': cookie['value'],
+                                'domain': cookie.get('domain', ''),
+                                'path': cookie.get('path', '/')
+                            }
+                            
+                            if cookie.get('expiry'):
+                                cookie_dict['expiry'] = cookie['expiry']
+                            if cookie.get('secure'):
+                                cookie_dict['secure'] = cookie['secure']
+                            if cookie.get('httpOnly'):
+                                cookie_dict['httpOnly'] = cookie['httpOnly']
+                            
+                            self.driver.add_cookie(cookie_dict)
+                            applied_count += 1
+                            
+                    except Exception as e:
+                        continue
+                
+                print(f"✅ Применено cookies: {applied_count}")
+                
+                # Обновляем страницу с примененными cookies с таймаутом
+                try:
+                    self.driver.refresh()
+                    time.sleep(3)
+                except Exception as e:
+                    print(f"⚠️ Таймаут обновления страницы: {e}")
+                    # Продолжаем работу
+                
+                return applied_count > 0
+                
+            finally:
+                # Восстанавливаем оригинальный таймаут
+                self.driver.set_page_load_timeout(original_timeout)
             
         except Exception as e:
             print(f"❌ Ошибка применения cookies: {e}")
-            return False
+            # Не возвращаем False сразу - даем возможность продолжить без cookies
+            print("⚠️ Продолжаем работу без cookies")
+            return True  # Возвращаем True чтобы попытаться продолжить работу
     
     def parse_card(self, url):
         """Парсит полную страницу объявления Avito"""
@@ -355,12 +382,18 @@ class AvitoCardParser:
             if not parsed_data:
                 return None
             
+            # Функция для очистки значений "Не найдено" и подобных
+            def clean_value(value):
+                if value in ['Не найдено', 'не найдено', 'Нет данных', 'нет данных', 'Не указано', 'не указано']:
+                    return ''
+                return value
+            
             # Базовые данные
             db_data = {
-                'url': parsed_data.get('url', ''),
-                'title': parsed_data.get('title', ''),
-                'price': parsed_data.get('price', ''),
-                'description': parsed_data.get('description', ''),
+                'url': clean_value(parsed_data.get('url', '')),
+                'title': clean_value(parsed_data.get('title', '')),
+                'price': clean_value(parsed_data.get('price', '')),
+                'description': clean_value(parsed_data.get('description', '')),
                 'source': 1,  # Avito
             }
             
@@ -395,7 +428,7 @@ class AvitoCardParser:
             # Адрес и метро
             address_data = parsed_data.get('address_data', {})
             if address_data:
-                db_data['address'] = address_data.get('address', '')
+                db_data['address'] = clean_value(address_data.get('address', ''))
                 
                 # Метро
                 metro_stations = address_data.get('metro_stations', [])
@@ -412,20 +445,23 @@ class AvitoCardParser:
                     db_data['metro_times'] = ', '.join(metro_times) if metro_times else ''
                     
                     # Извлекаем время до ближайшего метро для Excel
-                    if metro_times and metro_names:
-                        # Берем первое метро (обычно самое близкое)
-                        first_time = metro_times[0]
-                        first_station = metro_names[0]
+                    # Станции уже отсортированы по времени в extract_address_and_metro
+                    if metro_stations:
+                        # Берем первую станцию (ближайшую)
+                        closest_station = metro_stations[0]
+                        station_name = closest_station.get('name')
+                        time_minutes = closest_station.get('time_minutes')
                         
-                        # Извлекаем первую цифру из "6–10 мин." или "16–20 мин."
-                        time_match = re.search(r'(\d+)', first_time)
-                        if time_match:
-                            minutes = int(time_match.group(1))
-                            db_data['metro_time'] = f"{minutes} {first_station}"
+                        if station_name and time_minutes is not None:
+                            # Формируем время метро в формате "6 Текстильщики"
+                            db_data['metro_time'] = f"{time_minutes} {station_name}"
+                            print(f"🚇 Metro time для Excel: {db_data['metro_time']}")
                         else:
-                            db_data['metro_time'] = f"0 {first_station}"
+                            db_data['metro_time'] = None
                     else:
                         db_data['metro_time'] = None
+                else:
+                    db_data['metro_time'] = None
             
             # Параметры квартиры
             apartment_params = parsed_data.get('apartment_params', {})
@@ -532,6 +568,25 @@ class AvitoCardParser:
                     db_data['publication_date'] = publication_info['publication_date']
                 if 'today_views' in publication_info:
                     db_data['today_views'] = publication_info['today_views']
+            
+            # Статус объявления
+            status_info = parsed_data.get('status_info', {})
+            if status_info:
+                status = status_info.get('status', 'active')
+                # Преобразуем внутренние значения в формат для пользователя
+                if status == 'active':
+                    db_data['status'] = 'Активно'
+                elif status == 'inactive':
+                    db_data['status'] = 'Неактивно'
+                else:
+                    db_data['status'] = 'Неизвестно'
+                
+                # Добавляем причину определения статуса для отладки
+                if 'reason' in status_info:
+                    db_data['status_reason'] = status_info['reason']
+            else:
+                # Если статус не определен, считаем активным по умолчанию
+                db_data['status'] = 'Активно'
             
             # Фотографии - сохраняем для HTML галереи
             photos = parsed_data.get('photos', [])
@@ -1309,153 +1364,289 @@ class AvitoCardParser:
             return {}
 
     def extract_address_and_metro(self):
-        """Извлекает адрес и информацию о метро"""
+        """Извлекает адрес и информацию о метро с улучшенной диагностикой"""
         try:
+            import re  # Добавляем import для регулярных выражений
+            print("📍 Извлекаем адрес и метро...")
+            
             # Ищем блок с адресом
-            address_block = self.driver.find_element(By.CSS_SELECTOR, 'div[itemprop="address"]')
-            
-            # Используем JavaScript для извлечения адреса и метро
-            js_script = """
-            function extractAddressAndMetro() {
-                const addressBlock = document.querySelector('div[itemprop="address"]');
-                if (!addressBlock) return {};
+            address_block = None
+            try:
+                address_block = self.driver.find_element(By.CSS_SELECTOR, 'div[itemprop="address"]')
+                print("✅ Найден блок адреса с itemprop='address'")
+            except Exception as e:
+                print(f"❌ Блок адреса не найден: {e}")
+                print("🔍 Попробуем альтернативные селекторы...")
                 
-                const result = {};
+                # Альтернативные селекторы для адреса
+                alternative_selectors = [
+                    '[data-marker*="address"]',
+                    '[class*="address"]',
+                    '[class*="Address"]',
+                    'div[itemprop*="address"]'
+                ]
                 
-                // Извлекаем адрес
-                const addressSpan = addressBlock.querySelector('span.xLPJ6');
-                if (addressSpan) {
-                    result.address = addressSpan.textContent.trim();
-                }
+                for selector in alternative_selectors:
+                    try:
+                        address_block = self.driver.find_element(By.CSS_SELECTOR, selector)
+                        print(f"✅ Найден блок адреса с селектором: {selector}")
+                        break
+                    except:
+                        continue
                 
-                // Извлекаем информацию о метро
-                const metroStations = [];
-                const metroSpans = addressBlock.querySelectorAll('span.tAdYM');
-                
-                metroSpans.forEach((metroSpan, index) => {
-                    try {
-                        const stationName = '';
-                        const walkingTime = '';
-                        const lineColors = [];
-                        
-                        // Ищем название станции (исключаем элементы с определенными классами)
-                        const allElements = metroSpan.querySelectorAll('*');
-                        for (let elem of allElements) {
-                            if (!elem.classList.contains('KIhHC') && 
-                                !elem.classList.contains('LHPFZ') && 
-                                !elem.classList.contains('dt6FF') &&
-                                elem.textContent.trim() &&
-                                !elem.textContent.includes('мин') &&
-                                !elem.textContent.includes('–')) {
-                                stationName = elem.textContent.trim();
-                                break;
-                            }
-                        }
-                        
-                        // Ищем цвета линий
-                        const colorElements = metroSpan.querySelectorAll('i.dJYsT');
-                        colorElements.forEach(colorElem => {
-                            const style = colorElem.getAttribute('style');
-                            if (style && style.includes('background-color:')) {
-                                const colorMatch = style.match(/#[0-9A-Fa-f]{6}/);
-                                if (colorMatch) {
-                                    lineColors.push(colorMatch[0]);
-                                }
-                            }
-                        });
-                        
-                        // Ищем время в пути
-                        for (let elem of allElements) {
-                            const text = elem.textContent.trim();
-                            if (text.includes('мин') || text.includes('–')) {
-                                walkingTime = text;
-                                break;
-                            }
-                        }
-                        
-                        if (stationName) {
-                            metroStations.push({
-                                name: stationName,
-                                walking_time: walkingTime,
-                                line_colors: lineColors
-                            });
-                        }
-                    } catch (e) {
-                        console.log('Ошибка парсинга станции метро:', e);
+                if not address_block:
+                    print("❌ Не удалось найти блок с адресом")
+                    return {
+                        'address': 'Блок адреса не найден',
+                        'metro_stations': []
                     }
-                });
+            
+            # Извлекаем адрес
+            address_data = {}
+            try:
+                address_span = address_block.find_element(By.CSS_SELECTOR, 'span.xLPJ6')
+                address_data['address'] = address_span.text.strip()
+                print(f"📍 Найден адрес: {address_data['address']}")
+            except Exception as e:
+                print(f"⚠️ Не удалось извлечь адрес с span.xLPJ6: {e}")
                 
-                result.metro_stations = metroStations;
-                return result;
-            }
-            return extractAddressAndMetro();
-            """
+                # Попробуем альтернативные селекторы для адреса
+                address_selectors = ['span', 'div', '[data-marker*="address"]']
+                for selector in address_selectors:
+                    try:
+                        elements = address_block.find_elements(By.CSS_SELECTOR, selector)
+                        for elem in elements:
+                            text = elem.text.strip()
+                            if text and len(text) > 10 and ('ул.' in text or 'проспект' in text or 'пер.' in text):
+                                address_data['address'] = text
+                                print(f"📍 Найден адрес альтернативным способом: {text}")
+                                break
+                        if 'address' in address_data:
+                            break
+                    except:
+                        continue
+                
+                if 'address' not in address_data:
+                    address_data['address'] = "Не найден"
             
-            address_data = self.driver.execute_script(js_script)
-            
-            if address_data and isinstance(address_data, dict):
-                return address_data
-            else:
-                # Альтернативный метод
-                address_data = {}
-                try:
-                    address_span = address_block.find_element(By.CSS_SELECTOR, 'span.xLPJ6')
-                    if address_span:
-                        address_data['address'] = address_span.text.strip()
+            # Извлекаем информацию о метро с улучшенной диагностикой
+            metro_stations = []
+            try:
+                print("🚇 Ищем блоки метро...")
+                
+                # Основной селектор
+                metro_elements = address_block.find_elements(By.CSS_SELECTOR, 'span.tAdYM')
+                print(f"🚇 Найдено блоков метро с span.tAdYM: {len(metro_elements)}")
+                
+                # Если основной селектор не сработал, пробуем альтернативные
+                if len(metro_elements) == 0:
+                    print("🔍 Пробуем альтернативные селекторы для метро...")
                     
-                    metro_stations = []
-                    metro_spans = address_block.find_elements(By.CSS_SELECTOR, 'span.tAdYM')
+                    alternative_metro_selectors = [
+                        'span.xLPJ6',  # Альтернативный селектор
+                        'span[class*="metro"]',
+                        'span[class*="Metro"]',
+                        '[data-marker*="metro"]',
+                        'span[class*="transport"]'
+                    ]
                     
-                    for metro_span in metro_spans:
+                    for selector in alternative_metro_selectors:
                         try:
-                            station_name = ""
-                            walking_time = ""
-                            line_colors = []
-                            
-                            # Ищем название станции
-                            all_elements = metro_span.find_elements(By.CSS_SELECTOR, '*')
-                            for elem in all_elements:
-                                elem_text = elem.text.strip()
-                                if (elem_text and 
-                                    'мин' not in elem_text and 
-                                    '–' not in elem_text and
-                                    not elem.get_attribute('class') in ['KIhHC', 'LHPFZ', 'dt6FF']):
-                                    station_name = elem_text
-                                    break
-                            
-                            # Ищем цвета линий
-                            color_elements = metro_span.find_elements(By.CSS_SELECTOR, 'i.dJYsT')
-                            for color_elem in color_elements:
-                                style = color_elem.get_attribute('style')
-                                if style and 'background-color:' in style:
-                                    import re
-                                    color_match = re.search(r'#[0-9A-Fa-f]{6}', style)
-                                    if color_match:
-                                        line_colors.append(color_match.group(0))
-                            
-                            # Ищем время в пути
-                            for elem in all_elements:
-                                elem_text = elem.text.strip()
-                                if 'мин' in elem_text or '–' in elem_text:
-                                    walking_time = elem_text
-                                    break
-                            
-                            if station_name:
-                                metro_stations.append({
-                                    'name': station_name,
-                                    'walking_time': walking_time,
-                                    'line_colors': line_colors
-                                })
-                        
-                        except Exception as e:
+                            elements = address_block.find_elements(By.CSS_SELECTOR, selector)
+                            if elements:
+                                print(f"🚇 Найдено {len(elements)} элементов с селектором: {selector}")
+                                metro_elements.extend(elements)
+                        except:
                             continue
                     
-                    address_data['metro_stations'] = metro_stations
-                    
-                except Exception as e:
-                    pass
+                    # Если все еще ничего не найдено, проверим все span-элементы
+                    if len(metro_elements) == 0:
+                        print("🔍 Проверяем все span-элементы на наличие информации о метро...")
+                        all_spans = address_block.find_elements(By.TAG_NAME, 'span')
+                        print(f"📊 Всего span-элементов в блоке адреса: {len(all_spans)}")
+                        
+                        import re
+                        metro_pattern = r'\d+.*мин'
+                        
+                        for span in all_spans:
+                            text = span.text.strip()
+                            if text and re.search(metro_pattern, text):
+                                metro_elements.append(span)
+                                print(f"🚇 Найден элемент метро по паттерну: '{text}'")
                 
-                return address_data
+                print(f"🚇 Итого элементов метро для обработки: {len(metro_elements)}")
+                
+                # Обрабатываем найденные элементы метро
+                for i, metro_element in enumerate(metro_elements):
+                    try:
+                        # Получаем весь текст из блока метро используя JavaScript
+                        full_metro_text = self.driver.execute_script("return arguments[0].textContent;", metro_element).strip()
+                        class_name = metro_element.get_attribute('class') or 'no-class'
+                        print(f"🚇 Обрабатываем элемент {i+1}: class='{class_name}', text='{full_metro_text}'")
+                        
+                        if not full_metro_text:
+                            print(f"⚠️ Пустой текст в элементе {i+1}")
+                            continue
+                        
+                        # Извлекаем время из текста (ищем паттерн с "мин.")
+                        time_pattern = r'(\d+(?:–\d+)?)\s*мин\.?'
+                        time_match = re.search(time_pattern, full_metro_text)
+                        
+                        if not time_match:
+                            print(f"⚠️ Не найдено время в тексте элемента {i+1}: '{full_metro_text}'")
+                            continue
+                            
+                        time_text = time_match.group(0)  # Полное совпадение (например, "6–10 мин.")
+                        time_part = time_match.group(1)  # Только числа (например, "6–10")
+                        print(f"✅ Найдено время: '{time_text}' (числа: '{time_part}')")
+                        
+                        # Извлекаем название станции - текст перед временем
+                        station_text = full_metro_text[:time_match.start()].strip()
+                        print(f"🔍 Текст станции до времени: '{station_text}'")
+                        
+                        # Обрабатываем название станции
+                        station_words = station_text.split()
+                        if station_words:
+                            # Очищаем от иконок и символов
+                            clean_words = []
+                            for word in station_words:
+                                # Удаляем элементы, состоящие только из эмодзи/символов
+                                if not re.match(r'^[🚇🟢🔵🟣⭐🏠🔷🔶]+$', word):
+                                    clean_words.append(word)
+                            
+                            if clean_words:
+                                # Берем последние 1-2 слова как название станции
+                                if len(clean_words) >= 2 and len(clean_words[-1]) <= 4:
+                                    station_name = ' '.join(clean_words[-2:])
+                                else:
+                                    station_name = clean_words[-1]
+                            else:
+                                print(f"⚠️ Не удалось очистить название станции из '{station_text}'")
+                                continue
+                        else:
+                            print(f"⚠️ Не удалось извлечь название станции из '{station_text}'")
+                            continue
+                        
+                        print(f"✅ Извлечено название станции: '{station_name}'")
+                        
+                        # Извлекаем числовое значение времени для сравнения
+                        time_minutes = self._extract_walking_time_minutes(time_text)
+                        
+                        if station_name and time_text and time_minutes is not None:
+                            metro_stations.append({
+                                'name': station_name,
+                                'walking_time': time_text,
+                                'time_minutes': time_minutes,
+                                'line_colors': []  # Можно добавить извлечение цветов линий позже
+                            })
+                            print(f"🚇 Станция {len(metro_stations)}: {station_name} - {time_text} ({time_minutes} мин)")
+                        else:
+                            print(f"⚠️ Недостаточно данных для станции {i+1}")
+                        
+                    except Exception as e:
+                        print(f"⚠️ Ошибка обработки станции метро {i+1}: {e}")
+                        continue
+                        
+            except Exception as e:
+                print(f"⚠️ Ошибка извлечения метро: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            # Сортируем станции по времени (берем минимальное)
+            if metro_stations:
+                metro_stations.sort(key=lambda x: x['time_minutes'])
+                print(f"🚇 Ближайшая станция: {metro_stations[0]['name']} - {metro_stations[0]['time_minutes']} мин")
+            else:
+                print("❌ Станции метро не найдены")
+            
+            address_data['metro_stations'] = metro_stations
+            print(f"✅ Всего станций метро: {len(metro_stations)}")
+            
+            return address_data
+            
+        except Exception as e:
+            print(f"❌ Ошибка извлечения адреса и метро: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'address': 'Ошибка извлечения',
+                'metro_stations': []
+            }
+    
+    def _extract_walking_time_minutes(self, time_text):
+        """Извлекает минимальное время в минутах из строки вида '6–10 мин.' или '16–20 мин.'"""
+        try:
+            # Ищем паттерн с числами и диапазоном
+            # Паттерн для поиска чисел в строке времени
+            time_pattern = r'(\d+)(?:–(\d+))?\s*мин'
+            match = re.search(time_pattern, time_text)
+            
+            if match:
+                min_time = int(match.group(1))
+                max_time = int(match.group(2)) if match.group(2) else min_time
+                # Возвращаем минимальное время
+                return min_time
+            
+            return None
+        except Exception as e:
+            print(f"⚠️ Ошибка извлечения времени из '{time_text}': {e}")
+            return None
+
+
+    def parse_address_and_metro_from_text(self, address_text):
+        """Парсит адрес и метро из обычного текста (например, 'Метро 10 мин пешком')"""
+        try:
+            address_data = {}
+            metro_stations = []
+            
+            # Разделяем на строки
+            lines = [line.strip() for line in address_text.split('\n') if line.strip()]
+            
+            current_address = ""
+            
+            for line in lines:
+                # Проверяем различные форматы метро
+                metro_patterns = [
+                    r'Метро\s+(\d+)\s*мин\s*пешком',  # "Метро 10 мин пешком"
+                    r'([A-Яа-я\s\d\-№ёЁ]+?)\s*,\s*(\d+)\s*мин',  # "Улица 1905 года, 10 мин"
+                    r'м\s*\.\s*([A-Яа-я\s\d\-№ёЁ]+?)\s*,\s*(\d+)\s*мин',  # "м. Улица 1905 года, 10 мин"
+                    r'([A-Яа-я\s\d\-№ёЁ]+?)(\d+)(?:–\d+)?\s*мин',  # "Текстильщики6–10 мин" - новый формат
+                ]
+                
+                metro_found = False
+                for pattern in metro_patterns:
+                    metro_match = re.search(pattern, line, re.IGNORECASE)
+                    if metro_match:
+                        if len(metro_match.groups()) == 1:  # Первый паттерн - только время
+                            minutes = metro_match.group(1)
+                            station_name = "Неизвестно"  # Название не указано
+                        else:  # Остальные паттерны - название и время
+                            station_name = metro_match.group(1).strip()
+                            minutes = metro_match.group(2)
+                            
+                            # Для нового формата "Текстильщики6–10 мин" очищаем название станции
+                            # Убираем лишние пробелы и цифры из конца названия станции
+                            station_name = re.sub(r'\d+$', '', station_name).strip()
+                        
+                        metro_stations.append({
+                            'name': station_name,
+                            'walking_time': f"{minutes}–{minutes} мин.",
+                            'line_colors': []
+                        })
+                        metro_found = True
+                        break
+                
+                if not metro_found:
+                    # Это строка адреса
+                    if current_address:
+                        current_address += f", {line}"
+                    else:
+                        current_address = line
+            
+            address_data['address'] = current_address if current_address else "Не найден"
+            address_data['metro_stations'] = metro_stations
+            
+            return address_data
             
         except Exception as e:
             return {}
@@ -1531,14 +1722,42 @@ class AvitoCardParser:
                     result.publication_date = dateText.replace(/^[·\\s]+/, '').trim();
                 }
                 
-                // Ищем просмотры за сегодня
-                const todayViewsElement = document.querySelector('span[data-marker="item-view/today-views"]');
-                if (todayViewsElement) {
-                    const todayViewsText = todayViewsElement.textContent.trim();
-                    // Извлекаем число из текста "(+20 сегодня)"
-                    const todayViewsMatch = todayViewsText.match(/\\+(\\d+)/);
-                    if (todayViewsMatch) {
-                        result.today_views = parseInt(todayViewsMatch[1]);
+                // Ищем просмотры за сегодня с расширенными селекторами
+                const viewSelectors = [
+                    'span[data-marker="item-view/today-views"]',
+                    'span[data-marker="item-view/views"]',
+                    'span[class*="today-views"]',
+                    'span[class*="views-today"]',
+                    'div[data-marker="item-view/today-views"]',
+                    '[data-testid="today-views"]'
+                ];
+                
+                let todayViews = null;
+                for (const selector of viewSelectors) {
+                    const element = document.querySelector(selector);
+                    if (element) {
+                        const text = element.textContent.trim();
+                        // Пробуем разные паттерны извлечения
+                        const patterns = [
+                            /\+(\d+)/,           // "+20"
+                            /(\d+)\s*сегодня/i,   // "20 сегодня"
+                            /(\d+)\s*просмотр/i, // "20 просмотров"
+                            /сегодня\s+(\d+)/i,  // "сегодня 20"
+                            /(\d+)/              // любое число
+                        ];
+                        
+                        for (const pattern of patterns) {
+                            const match = text.match(pattern);
+                            if (match) {
+                                todayViews = parseInt(match[1]);
+                                break;
+                            }
+                        }
+                        
+                        if (todayViews !== null) {
+                            result.today_views = todayViews;
+                            break;
+                        }
                     }
                 }
                 
@@ -1552,32 +1771,216 @@ class AvitoCardParser:
             if publication_info and isinstance(publication_info, dict):
                 return publication_info
             else:
-                # Альтернативный метод: ищем элементы вручную
+                # Альтернативный метод: ищем элементы вручную с расширенными селекторами
                 publication_info = {}
                 try:
                     # Ищем дату публикации
-                    date_element = self.driver.find_element(By.CSS_SELECTOR, 'span[data-marker="item-view/item-date"]')
-                    if date_element:
-                        date_text = date_element.text.strip()
-                        # Убираем лишние символы и пробелы
-                        publication_info['publication_date'] = date_text.replace('·', '').strip()
+                    date_selectors = [
+                        'span[data-marker="item-view/item-date"]',
+                        'span[class*="item-date"]',
+                        'div[data-marker="item-view/item-date"]',
+                        '[data-testid="item-date"]'
+                    ]
                     
-                    # Ищем просмотры за сегодня
-                    today_views_element = self.driver.find_element(By.CSS_SELECTOR, 'span[data-marker="item-view/today-views"]')
-                    if today_views_element:
-                        today_views_text = today_views_element.text.strip()
-                        # Извлекаем число из текста
-                        today_views_match = re.search(r'\+(\d+)', today_views_text)
-                        if today_views_match:
-                            publication_info['today_views'] = int(today_views_match.group(1))
+                    for selector in date_selectors:
+                        try:
+                            date_element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                            if date_element:
+                                date_text = date_element.text.strip()
+                                # Убираем лишние символы и пробелы
+                                publication_info['publication_date'] = date_text.replace('·', '').strip()
+                                break
+                        except:
+                            continue
                     
+                    # Ищем просмотры за сегодня с расширенными селекторами
+                    today_views_selectors = [
+                        'span[data-marker="item-view/today-views"]',
+                        'span[data-marker="item-view/views"]',
+                        'span[class*="today-views"]',
+                        'span[class*="views-today"]',
+                        'div[data-marker="item-view/today-views"]',
+                        '[data-testid="today-views"]'
+                    ]
+                    
+                    found_views = False
+                    for selector in today_views_selectors:
+                        try:
+                            today_views_element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                            if today_views_element:
+                                today_views_text = today_views_element.text.strip()
+                                print(f"🔍 Найден элемент просмотров: '{today_views_text}' (селектор: {selector})")
+                                
+                                # Пробуем разные паттерны извлечения числа
+                                patterns = [
+                                    r'\+(\d+)',           # "+20"
+                                    r'(\d+)\s*сегодня',    # "20 сегодня"
+                                    r'(\d+)\s*просмотр',  # "20 просмотров"
+                                    r'сегодня\s+(\d+)',   # "сегодня 20"
+                                    r'(\d+)'              # любое число
+                                ]
+                                
+                                for pattern in patterns:
+                                    today_views_match = re.search(pattern, today_views_text, re.IGNORECASE)
+                                    if today_views_match:
+                                        publication_info['today_views'] = int(today_views_match.group(1))
+                                        print(f"✅ Извлечено просмотров: {publication_info['today_views']}")
+                                        found_views = True
+                                        break
+                                
+                                if found_views:
+                                    break
+                        except:
+                            continue
+                    
+                    # Если не нашли через основные селекторы, ищем во всем тексте страницы
+                    if not found_views:
+                        try:
+                            page_text = self.driver.find_element(By.TAG_NAME, 'body').text
+                            # Ищем паттерны в тексте всей страницы
+                            view_patterns = [
+                                r'\+(\d+)\s*сегодня',
+                                r'(\d+)\s*просмотр.*сегодня',
+                                r'сегодня.*?(\d+).*?просмотр'
+                            ]
+                            
+                            for pattern in view_patterns:
+                                match = re.search(pattern, page_text, re.IGNORECASE)
+                                if match:
+                                    publication_info['today_views'] = int(match.group(1))
+                                    print(f"📄 Найдено в тексте страницы - просмотров: {publication_info['today_views']}")
+                                    found_views = True
+                                    break
+                        except:
+                            pass
+                    
+                    # Если все еще не нашли, выставляем 0 с предупреждением
+                    if not found_views:
+                        publication_info['today_views'] = 0
+                        print("⚠️ Просмотры за сегодня не найдены, устанавливаем 0")
+                        
                 except Exception as e:
-                    pass
+                    print(f"⚠️ Ошибка альтернативного извлечения: {e}")
+                    publication_info['today_views'] = 0
                 
                 return publication_info
             
         except Exception as e:
-            return {}
+            print(f"❌ Ошибка извлечения информации о публикации: {e}")
+            return {'today_views': 0}
+
+    def quick_status_check(self):
+        """Быстрая проверка статуса страницы без глубокого парсинга"""
+        try:
+            # Проверяем заголовок страницы
+            try:
+                page_title = self.driver.title.lower()
+                if any(marker in page_title for marker in ['объявление снято', 'страница не найдена', 'ошибка']):
+                    return {'status': 'inactive', 'reason': f'Неактивный заголовок: {page_title}'}
+            except Exception:
+                pass
+            
+            # Проверяем наличие основных элементов
+            try:
+                # Проверяем наличие заголовка объявления
+                title_selectors = [
+                    'h1[data-marker="item-view/title-info"]',
+                    'h1[class*="title"]',
+                    'h1'
+                ]
+                
+                title_found = False
+                for selector in title_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements and any(el.is_displayed() and el.text.strip() for el in elements):
+                            title_found = True
+                            break
+                    except Exception:
+                        continue
+                
+                if not title_found:
+                    return {'status': 'inactive', 'reason': 'Заголовок объявления не найден'}
+            except Exception:
+                pass
+            
+            # Проверяем наличие сообщений об ошибке
+            try:
+                page_source = self.driver.page_source.lower()
+                error_phrases = ['объявление снято', 'страница не найдена', 'ошибка 404']
+                for phrase in error_phrases:
+                    if phrase in page_source:
+                        return {'status': 'inactive', 'reason': f'Найден текст: {phrase}'}
+            except Exception:
+                pass
+            
+            # Если все проверки прошли - страница выглядит активной
+            return {'status': 'active', 'reason': 'Быстрая проверка пройдена'}
+            
+        except Exception as e:
+            return {'status': 'unknown', 'reason': f'Ошибка быстрой проверки: {str(e)}'}
+
+    def extract_listing_status(self, title_components=None):
+        """Извлекает статус объявления на основе наличия данных из заголовка
+        
+        Args:
+            title_components: словарь с данными из заголовка (rooms, floor, etc.)
+            
+        Returns:
+            dict: {'status': 'active'/'inactive', 'reason': 'описание причины'}
+        """
+        try:
+            # Новая логика: если есть основные данные из заголовка (комнаты, этаж), то объявление активно
+            if title_components:
+                rooms = title_components.get('rooms')
+                floor = title_components.get('floor')
+                
+                # Проверяем наличие ключевых данных
+                has_rooms_data = rooms is not None
+                has_floor_data = floor is not None
+                
+                if has_rooms_data and has_floor_data:
+                    return {
+                        'status': 'active',
+                        'reason': f'✅ Найдены основные данные: {rooms} комн., {floor} этаж'
+                    }
+                elif has_rooms_data or has_floor_data:
+                    return {
+                        'status': 'active', 
+                        'reason': f'✅ Найдены частичные данные: комнаты={rooms}, этаж={floor}'
+                    }
+                else:
+                    return {
+                        'status': 'inactive',
+                        'reason': '❌ Нет основных данных из заголовка (комнаты, этаж)'
+                    }
+            
+            # Если title_components не передан, пытаемся извлечь заголовок прямо здесь
+            try:
+                title_element = self.driver.find_element(By.CSS_SELECTOR, 'h1[data-marker="item-view/title-info"]')
+                title_text = title_element.text.strip()
+                
+                if title_text and title_text != "Не найдено":
+                    # Парсим заголовок
+                    components = self.parse_title(title_text)
+                    return self.extract_listing_status(components)  # Рекурсивный вызов с данными
+                else:
+                    return {
+                        'status': 'inactive',
+                        'reason': '❌ Заголовок не найден или пустой'
+                    }
+                    
+            except Exception as e:
+                return {
+                    'status': 'inactive',
+                    'reason': f'❌ Ошибка извлечения заголовка: {str(e)}'
+                }
+                
+        except Exception as e:
+            return {
+                'status': 'unknown',
+                'reason': f'❌ Ошибка проверки статуса: {str(e)}'
+            }
 
     def parse_avito_page(self, url):
         """Парсит полную страницу объявления Avito"""
@@ -1602,11 +2005,43 @@ class AvitoCardParser:
             
             # Переходим на страницу объявления
             print(f"🌐 Переходим на страницу: {url}")
-            self.driver.get(url)
             
-            # Ждем загрузки страницы
-            import time
-            time.sleep(5)
+            # Устанавливаем таймаут для загрузки страницы
+            self.driver.set_page_load_timeout(30)  # 30 секунд максимум
+            
+            try:
+                self.driver.get(url)
+                # Добавляем задержку для полной загрузки страницы (как в старом парсере)
+                print("⏳ Ждем загрузки страницы...")
+                time.sleep(5)  # Увеличиваем до 5 секунд для стабильной загрузки
+            except Exception as e:
+                print(f"⚠️ Таймаут или ошибка загрузки страницы: {e}")
+                # Возможно, страница не существует или заблокирована
+                return {
+                    'url': url,
+                    'title': 'Страница недоступна',
+                    'price': 'Не найдено',
+                    'status_info': {'status': 'inactive', 'reason': f'Ошибка загрузки страницы: {str(e)}'}
+                }
+            
+            # Дополнительная пауза для стабилизации DOM (как в старом парсере)
+            print("⏳ Ждем стабилизации DOM...")
+            time.sleep(3)
+            
+            # Пауза перед началом парсинга (как в старом парсере)
+            print("⏳ Подготовка к парсингу...")
+            time.sleep(2)
+            
+            # Быстрая проверка статуса страницы перед полным парсингом
+            quick_status = self.quick_status_check()
+            if quick_status['status'] == 'inactive':
+                print(f"🚫 Объявление неактивно: {quick_status['reason']}")
+                return {
+                    'url': url,
+                    'title': 'Объявление неактивно',
+                    'price': 'Не найдено',
+                    'status_info': quick_status
+                }
             
             # Извлекаем заголовок
             try:
@@ -1662,46 +2097,65 @@ class AvitoCardParser:
                 price_text = "Не найдено"
                 print("❌ Цена не найдена")
             
-            # Извлекаем фотографии в высоком качестве
-            print("📸 Извлекаем фотографии в высоком качестве...")
-            photos = self.extract_photos_with_slider_navigation()
-            print(f"✅ Найдено фотографий в высоком качестве: {len(photos)}")
+            # Извлекаем фотографии в высоком качестве (только если не отключено)
+            if self.skip_photos:
+                print("📸 Пропускаем извлечение фотографий (skip_photos=True)")
+                photos = []
+            else:
+                print("📸 Извлекаем фотографии в высоком качестве...")
+                photos = self.extract_photos_with_slider_navigation()
+                print(f"✅ Найдено фотографий в высоком качестве: {len(photos)}")
             
             # Извлекаем параметры квартиры
             print("🏠 Извлекаем параметры квартиры...")
             apartment_params = self.extract_apartment_params()
             print(f"✅ Параметров квартиры: {len(apartment_params)}")
             
+            # Пауза между извлечениями (как в старом парсере)
+            time.sleep(2)
+            
             # Извлекаем параметры дома
             print("🏢 Извлекаем параметры дома...")
             house_params = self.extract_house_params()
             print(f"✅ Параметров дома: {len(house_params)}")
             
+            # Пауза между извлечениями (как в старом парсере)
+            time.sleep(2)
+            
             # Извлекаем адрес и метро
             print("📍 Извлекаем адрес и метро...")
-            time.sleep(5)  # Увеличиваем задержку для загрузки динамического контента
             address_data = self.extract_address_and_metro()
             print(f"✅ Адрес: {address_data.get('address', 'Не найден')}")
             print(f"✅ Станций метро: {len(address_data.get('metro_stations', []))}")
             
-            # Если метро не найдено, пробуем еще раз с дополнительной задержкой
-            if len(address_data.get('metro_stations', [])) == 0:
+            # Если метро не найдено и мы не для Excel, пробуем еще раз
+            if len(address_data.get('metro_stations', [])) == 0 and not self.skip_photos:
                 print("🔄 Метро не найдено, пробуем еще раз...")
-                time.sleep(3)
+                time.sleep(2)
                 address_data = self.extract_address_and_metro()
                 print(f"✅ Станций метро (повторная попытка): {len(address_data.get('metro_stations', []))}")
             
-            # Извлекаем описание
-            print("📝 Извлекаем описание...")
-            description = self.extract_description()
-            print(f"✅ Описание: {len(description)} символов")
+            # Всегда проверяем статус на основе данных заголовка
+            print("🔍 Проверяем статус объявления...")
+            status_info = self.extract_listing_status(title_components)
+            print(f"✅ Статус: {status_info.get('status', 'Неизвестно')} - {status_info.get('reason', 'Нет описания')}")
             
-            # Извлекаем информацию о публикации
-            print("📅 Извлекаем информацию о публикации...")
-            publication_info = self.extract_publication_info()
-            print(f"✅ Дата: {publication_info.get('publication_date', 'Не найдена')}")
-            print(f"✅ Просмотров сегодня: {publication_info.get('today_views', 'Не найдено')}")
-            
+            # Для Excel экспорта пропускаем дополнительные словные данные
+            if self.skip_photos:
+                print("⚡ Быстрый режим для Excel: пропускаем описание")
+                description = ""
+                publication_info = {}
+            else:
+                # Извлекаем описание
+                print("📝 Извлекаем описание...")
+                description = self.extract_description()
+                print(f"✅ Описание: {len(description)} символов")
+                
+                # Извлекаем информацию о публикации
+                print("📅 Извлекаем информацию о публикации...")
+                publication_info = self.extract_publication_info()
+                print(f"✅ Дата: {publication_info.get('publication_date', 'Не найдена')}")
+                print(f"✅ Просмотров сегодня: {publication_info.get('today_views', 'Не найдено')}")
             # Собираем все данные
             result = {
                 'url': url,
@@ -1713,6 +2167,7 @@ class AvitoCardParser:
                 'address_data': address_data,
                 'description': description,
                 'publication_info': publication_info,
+                'status_info': status_info,
                 **title_components  # Добавляем компоненты заголовка
             }
             
