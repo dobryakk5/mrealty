@@ -238,11 +238,31 @@ class FlexibleCollector:
                 del payload["conditions"]["total_room_count"]
         # Если нужны только обычные комнаты
         elif regular_rooms and not studios_needed:
-            payload["conditions"]["total_room_count"] = regular_rooms
+            # Обрабатываем случай с 6+ комнатами
+            if 6 in regular_rooms:
+                # Если только 6, то делаем "6+"
+                if regular_rooms == [6]:
+                    payload["conditions"]["total_room_count"] = ["6+"]
+                else:
+                    # Если 6 есть в списке с другими комнатами, заменяем на "6+"
+                    other_rooms = [r for r in regular_rooms if r < 6]
+                    payload["conditions"]["total_room_count"] = other_rooms + ["6+"]
+            else:
+                payload["conditions"]["total_room_count"] = regular_rooms
             payload["conditions"]["is_studio"] = False
         # Если нужны и студии, и обычные комнаты
         elif studios_needed and regular_rooms:
-            payload["conditions"]["total_room_count"] = regular_rooms
+            # Обрабатываем случай с 6+ комнатами
+            if 6 in regular_rooms:
+                # Если только 6, то делаем "6+"
+                if regular_rooms == [6]:
+                    payload["conditions"]["total_room_count"] = ["6+"]
+                else:
+                    # Если 6 есть в списке с другими комнатами, заменяем на "6+"
+                    other_rooms = [r for r in regular_rooms if r < 6]
+                    payload["conditions"]["total_room_count"] = other_rooms + ["6+"]
+            else:
+                payload["conditions"]["total_room_count"] = regular_rooms
             # Удаляем фильтр is_studio, чтобы включить студии
             if "is_studio" in payload["conditions"]:
                 del payload["conditions"]["is_studio"]
