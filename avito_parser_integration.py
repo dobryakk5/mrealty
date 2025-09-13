@@ -27,6 +27,7 @@ class AvitoCardParser:
         self.driver = None
         self.cookies_file = "avito_cookies.json"
         self.skip_photos = skip_photos  # Новый параметр для пропуска фото
+        self.session = None  # HTTP сессия для легкого парсинга
         
     def load_cookies(self):
         """Загружает cookies для Avito"""
@@ -169,6 +170,183 @@ class AvitoCardParser:
     def parse_card(self, url):
         """Парсит полную страницу объявления Avito"""
         return self.parse_avito_page(url)
+    
+    def parse_avito_page_light(self, url):
+        """Легкий HTTP парсинг без Selenium. Fallback к Selenium если не работает."""
+        try:
+            print(f"🌐 Попытка легкого HTTP парсинга: {url}")
+            
+            # Пробуем HTTP парсинг
+            result = self._http_parse(url)
+            if result and result.get('success', False):
+                print("✅ Легкий HTTP парсинг успешен")
+                return result
+            
+            print("⚠️ HTTP парсинг не удался, переходим на Selenium...")
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка HTTP парсинга: {e}")
+            print("🔄 Переходим на Selenium...")
+        
+        # Fallback к Selenium
+        return self.parse_avito_page(url)
+    
+    def _http_parse(self, url):
+        """Пытается распарсить через обычный HTTP запрос"""
+        try:
+            if not self.session:
+                self.session = self._create_http_session()
+            
+            response = self.session.get(url)
+            response.raise_for_status()
+            
+            # Проверяем не заблокировал ли Avito
+            if 'captcha' in response.text.lower() or 'робот' in response.text.lower():
+                print("❌ HTTP запрос заблокирован (капча)")
+                return None
+            
+            # Парсим HTML
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Проверяем активность объявления
+            if soup.find(string=lambda text: text and 'не найден' in text.lower()):
+                print("❌ Объявление не найдено (404)")
+                return {'success': False, 'reason': '404'}
+            
+            # Парсим основные данные
+            data = self._extract_basic_data_http(soup, url)
+            if data:
+                return {'success': True, 'data': data}
+            
+            return {'success': False, 'reason': 'no_data'}
+            
+        except Exception as e:
+            print(f"❌ HTTP парсинг завершился с ошибкой: {e}")
+            return None
+    
+    def _create_http_session(self):
+        """Создает HTTP сессию с нужными заголовками"""
+        import requests
+        
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        })
+        
+        # Загружаем cookies если есть
+        try:
+            if os.path.exists(self.cookies_file):
+                with open(self.cookies_file, 'r', encoding='utf-8') as f:
+                    cookies_data = json.load(f)
+                for cookie in cookies_data.get('cookies', []):
+                    session.cookies.set(cookie['name'], cookie['value'], domain=cookie.get('domain'))
+                print(f"🍪 Загружено cookies для HTTP: {len(cookies_data.get('cookies', []))}")
+        except Exception as e:
+            print(f"⚠️ Ошибка загрузки cookies для HTTP: {e}")
+        
+        return session
+    
+    def _extract_basic_data_http(self, soup, url):
+        """Извлекает базовые данные из HTML через BeautifulSoup"""
+        try:
+            data = {'url': url}
+            
+            # Заголовок
+            title_elem = soup.find('h1') or soup.find('[data-marker="item-view/title"]')
+            if title_elem:
+                data['title'] = title_elem.get_text(strip=True)
+                # Парсим заголовок
+                title_parsed = self.parse_title(data['title'])
+                data.update(title_parsed)
+            
+            # Цена  
+            price_selectors = [
+                '[data-marker="item-view/item-price"]',
+                '.price-value-string',
+                '[class*="price"]'
+            ]
+            
+            for selector in price_selectors:
+                price_elem = soup.select_one(selector)
+                if price_elem:
+                    price_text = price_elem.get_text(strip=True)
+                    if price_text and 'цена' not in price_text.lower():
+                        data['price'] = price_text
+                        break
+            
+            # Адрес из мета тегов или текста страницы
+            # Ищем адрес в различных местах
+            address_text = self._find_address_http(soup)
+            if address_text:
+                data['address'] = address_text
+                # Парсим метро из текста адреса  
+                metro_data = self._parse_metro_from_text(address_text)
+                if metro_data:
+                    data.update(metro_data)
+            
+            return data if data.get('price') else None
+            
+        except Exception as e:
+            print(f"❌ Ошибка извлечения данных HTTP: {e}")
+            return None
+    
+    def _find_address_http(self, soup):
+        """Ищет адрес на странице через различные селекторы"""
+        try:
+            # Поиск по различным селекторам
+            selectors = [
+                '[itemprop="address"]',
+                '[data-marker*="address"]', 
+                '.item-address',
+                '[class*="address"]'
+            ]
+            
+            for selector in selectors:
+                elem = soup.select_one(selector)
+                if elem:
+                    text = elem.get_text(strip=True)
+                    if text and len(text) > 10:
+                        return text
+            
+            return None
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка поиска адреса: {e}")
+            return None
+    
+    def _parse_metro_from_text(self, text):
+        """Парсит информацию о метро из текста"""
+        try:
+            import re
+            
+            # Ищем паттерны метро
+            metro_patterns = [
+                r'(.+?)(\d+)\s*мин\.',  # "Сокольникидо 5 мин."
+                r'(.+?)\s*-\s*(\d+)\s*мин\.',  # "Сокольники - 5 мин."
+            ]
+            
+            for pattern in metro_patterns:
+                match = re.search(pattern, text)
+                if match:
+                    station = match.group(1).replace('до', '').strip()
+                    time_min = int(match.group(2))
+                    return {
+                        'metro_station': station,
+                        'metro_time': time_min,
+                        'metro_way': 'пешком'
+                    }
+            
+            return None
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка парсинга метро: {e}")
+            return None
     
     def parse_title(self, title_text):
         """Парсит заголовок на компоненты"""
@@ -429,39 +607,9 @@ class AvitoCardParser:
             address_data = parsed_data.get('address_data', {})
             if address_data:
                 db_data['address'] = clean_value(address_data.get('address', ''))
-                
-                # Метро
-                metro_stations = address_data.get('metro_stations', [])
-                if metro_stations:
-                    metro_names = []
-                    metro_times = []
-                    for station in metro_stations:
-                        if station.get('name'):
-                            metro_names.append(station['name'])
-                        if station.get('walking_time'):
-                            metro_times.append(station['walking_time'])
-                    
-                    db_data['metro_stations'] = ', '.join(metro_names) if metro_names else ''
-                    db_data['metro_times'] = ', '.join(metro_times) if metro_times else ''
-                    
-                    # Извлекаем время до ближайшего метро для Excel
-                    # Станции уже отсортированы по времени в extract_address_and_metro
-                    if metro_stations:
-                        # Берем первую станцию (ближайшую)
-                        closest_station = metro_stations[0]
-                        station_name = closest_station.get('name')
-                        time_minutes = closest_station.get('time_minutes')
-                        
-                        if station_name and time_minutes is not None:
-                            # Формируем время метро в формате "6 Текстильщики"
-                            db_data['metro_time'] = f"{time_minutes} {station_name}"
-                            print(f"🚇 Metro time для Excel: {db_data['metro_time']}")
-                        else:
-                            db_data['metro_time'] = None
-                    else:
-                        db_data['metro_time'] = None
-                else:
-                    db_data['metro_time'] = None
+                db_data['metro_station'] = address_data.get('metro_station')
+                db_data['metro_time'] = address_data.get('metro_time')
+                db_data['metro_way'] = address_data.get('metro_way')
             
             # Параметры квартиры
             apartment_params = parsed_data.get('apartment_params', {})
@@ -1364,11 +1512,221 @@ class AvitoCardParser:
             return {}
 
     def extract_address_and_metro(self):
-        """Извлекает адрес и информацию о метро с улучшенной диагностикой"""
+        """Извлекает адрес и информацию о метро из секции Расположение"""
         try:
-            import re  # Добавляем import для регулярных выражений
+            import re
             print("📍 Извлекаем адрес и метро...")
             
+            # Ищем заголовок "Расположение" с улучшенной стратегией
+            location_content = None
+            
+            try:
+                # Стратегия 1: Ищем специфичные селекторы для Авито
+                location_selectors = [
+                    '[data-marker*="location"]',
+                    '[class*="location"]', 
+                    'section:has(*:contains("Расположение"))',
+                    'div:has(h2:contains("Расположение"))',
+                    'div:has(h3:contains("Расположение"))'
+                ]
+                
+                for selector in location_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        for elem in elements:
+                            elem_text = elem.text.strip()
+                            if elem_text and ('м.' in elem_text or 'мин' in elem_text or 'ул.' in elem_text or 'проспект' in elem_text):
+                                location_content = elem_text
+                                print(f"✅ Найден контент через селектор {selector}: {elem_text[:50]}...")
+                                break
+                        if location_content:
+                            break
+                    except:
+                        continue
+                
+                # Стратегия 2: Поиск через заголовок "Расположение"
+                if not location_content:
+                    # Ищем заголовок
+                    header_elements = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'Расположение')]")
+                    for header in header_elements:
+                        if header.tag_name.lower() in ['h2', 'h3', 'h4', 'span', 'div']:
+                            print(f"🔍 Найден заголовок в {header.tag_name}: {header.text.strip()}")
+                            
+                            # Ищем контент в различных местах относительно заголовка
+                            search_strategies = [
+                                # Следующие соседние элементы
+                                ('following-sibling', lambda i: f'./following-sibling::*[{i}]'),
+                                # Дочерние элементы родителя после заголовка  
+                                ('parent-children', lambda i: f'./../*[position()>1][{i}]'),
+                                # Элементы внутри родительского контейнера
+                                ('parent-content', lambda i: f'./..//div[{i}]'),
+                            ]
+                            
+                            for strategy_name, xpath_func in search_strategies:
+                                for i in range(1, 6):  # Проверяем несколько элементов
+                                    try:
+                                        xpath = xpath_func(i)
+                                        candidate = header.find_element(By.XPATH, xpath)
+                                        candidate_text = candidate.text.strip()
+                                        
+                                        # Проверяем, что это похоже на адрес/метро
+                                        if (candidate_text and len(candidate_text) > 5 and 
+                                            (('м.' in candidate_text and 'мин' in candidate_text) or 
+                                             'ул.' in candidate_text or 'проспект' in candidate_text or
+                                             any(word in candidate_text.lower() for word in ['москва', 'санкт', 'новосибирск', 'екатеринбург']))):
+                                            location_content = candidate_text
+                                            print(f"✅ Найден контент ({strategy_name} #{i}): {candidate_text[:50]}...")
+                                            break
+                                    except Exception as e:
+                                        continue
+                                if location_content:
+                                    break
+                            if location_content:
+                                break
+                
+                # Стратегия 3: Широкий поиск по всей странице
+                if not location_content:
+                    print("🔍 Широкий поиск адреса по странице...")
+                    # Ищем элементы, которые могут содержать адрес
+                    all_text_elements = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'м.') and contains(text(), 'мин')]")
+                    for elem in all_text_elements:
+                        elem_text = elem.text.strip()
+                        if len(elem_text) > 10 and len(elem_text) < 200:  # Разумная длина для адреса
+                            location_content = elem_text
+                            print(f"✅ Найден адрес широким поиском: {elem_text[:50]}...")
+                            break
+                            
+            except Exception as e:
+                print(f"⚠️ Ошибка поиска секции расположения: {e}")
+            
+            if not location_content:
+                print("❌ Контент расположения не найден")
+                print("🔍 Пробуем найти адрес и метро через старые селекторы...")
+                return self._extract_address_old_way()
+            
+            print(f"📍 Извлеченный текст расположения: {location_content}")
+            return self._parse_location_section_text(location_content)
+        
+        except Exception as e:
+            print(f"❌ Ошибка извлечения адреса и метро: {e}")
+            return {
+                'address': 'Ошибка извлечения',
+                'metro_stations': []
+            }
+    
+    def _parse_location_section_text(self, section_text):
+        """Парсит текст из секции Расположение"""
+        try:
+            import re
+            
+            # Разбиваем на строки, включая переносы строк
+            lines = []
+            for line in section_text.split('\n'):
+                line = line.strip()
+                if line:
+                    lines.append(line)
+            
+            print(f"🔍 Обработка строк: {lines}")
+            
+            # Пропускаем заголовок "Расположение" если он есть
+            filtered_lines = []
+            for line in lines:
+                if line.lower() not in ['расположение', 'location']:
+                    filtered_lines.append(line)
+            
+            if len(filtered_lines) >= 2:
+                # Первая строка - адрес
+                address = filtered_lines[0].strip()
+                print(f"📍 Найден адрес: {address}")
+                
+                # Вторая строка - метро и время (используем старую логику)
+                metro_line = filtered_lines[1].strip()
+                print(f"🚇 Парсим строку метро: {metro_line}")
+                
+                # Парсим метро и время (старая проверенная логика)
+                metro_name = None
+                time_to_metro = None
+                
+                # Ищем время до метро (расширенные паттерны из старого кода)
+                time_patterns = [
+                    r'(\d+)\s*[-–—]\s*(\d+)\s*мин\.?',  # "6–10 мин." 
+                    r'(\d+)\s*мин\.?',  # "5 мин."
+                    r'до\s*(\d+)\s*мин\.?',  # "до 5 мин."
+                    r'(\d+)\s*минут',  # "5 минут"
+                ]
+                
+                # Сначала извлекаем время
+                for pattern in time_patterns:
+                    time_match = re.search(pattern, metro_line)
+                    if time_match:
+                        if '–' in pattern or '—' in pattern:
+                            # Диапазон времени
+                            min_time = int(time_match.group(1))
+                            max_time = int(time_match.group(2))
+                            time_to_metro = (min_time + max_time) // 2
+                        else:
+                            # Одно время
+                            time_to_metro = int(time_match.group(1))
+                        break
+                
+                # Теперь извлекаем название станции
+                # "Римская6–10 мин." -> название "Римская"
+                station_match = re.match(r'([А-Яа-яёЁ\s]+?)(?=\d)', metro_line)
+                if station_match:
+                    metro_name = station_match.group(1).strip()
+                else:
+                    # Если не получилось через регулярку, пробуем разделить по запятой
+                    if ',' in metro_line:
+                        parts = metro_line.split(',')
+                        for part in parts:
+                            part = part.strip()
+                            if part and not re.search(r'\d+\s*мин', part):
+                                # Это часть без времени - потенциальное название
+                                clean_name = re.sub(r'\b(до|пешком|мин\.?|минут)\b', '', part).strip()
+                                if clean_name and len(clean_name) > 1:
+                                    metro_name = clean_name
+                                    break
+                
+                print(f"✅ Извлечено: станция='{metro_name}', время={time_to_metro}")
+                
+                return {
+                    'address': address,
+                    'metro_station': metro_name,
+                    'metro_time': time_to_metro, 
+                    'metro_way': 'пешком'
+                }
+                
+            elif len(filtered_lines) == 1:
+                # Только адрес, метро нет
+                address = filtered_lines[0].strip()
+                print(f"📍 Найден только адрес: {address}")
+                return {
+                    'address': address,
+                    'metro_station': None,
+                    'metro_time': None,
+                    'metro_way': None
+                }
+            else:
+                # Нет данных
+                return {
+                    'address': "Не найден",
+                    'metro_station': None,
+                    'metro_time': None,
+                    'metro_way': None
+                }
+            
+        except Exception as e:
+            print(f"❌ Ошибка парсинга секции расположения: {e}")
+            return {
+                'address': 'Ошибка парсинга',
+                'metro_station': None,
+                'metro_time': None,
+                'metro_way': None
+            }
+    
+    def _extract_address_old_way(self):
+        """Старый способ извлечения адреса для обратной совместимости"""
+        try:
             # Ищем блок с адресом
             address_block = None
             try:
@@ -1398,179 +1756,34 @@ class AvitoCardParser:
                     print("❌ Не удалось найти блок с адресом")
                     return {
                         'address': 'Блок адреса не найден',
-                        'metro_stations': []
+                        'metro_station': None,
+                        'metro_time': None,
+                        'metro_way': None
                     }
             
-            # Извлекаем адрес
-            address_data = {}
-            try:
-                address_span = address_block.find_element(By.CSS_SELECTOR, 'span.xLPJ6')
-                address_data['address'] = address_span.text.strip()
-                print(f"📍 Найден адрес: {address_data['address']}")
-            except Exception as e:
-                print(f"⚠️ Не удалось извлечь адрес с span.xLPJ6: {e}")
-                
-                # Попробуем альтернативные селекторы для адреса
-                address_selectors = ['span', 'div', '[data-marker*="address"]']
-                for selector in address_selectors:
-                    try:
-                        elements = address_block.find_elements(By.CSS_SELECTOR, selector)
-                        for elem in elements:
-                            text = elem.text.strip()
-                            if text and len(text) > 10 and ('ул.' in text or 'проспект' in text or 'пер.' in text):
-                                address_data['address'] = text
-                                print(f"📍 Найден адрес альтернативным способом: {text}")
-                                break
-                        if 'address' in address_data:
-                            break
-                    except:
-                        continue
-                
-                if 'address' not in address_data:
-                    address_data['address'] = "Не найден"
+            # Простое извлечение текста из блока адреса
+            block_text = address_block.text.strip()
+            print(f"📍 Текст блока адреса: {block_text}")
             
-            # Извлекаем информацию о метро с улучшенной диагностикой
-            metro_stations = []
-            try:
-                print("🚇 Ищем блоки метро...")
-                
-                # Основной селектор
-                metro_elements = address_block.find_elements(By.CSS_SELECTOR, 'span.tAdYM')
-                print(f"🚇 Найдено блоков метро с span.tAdYM: {len(metro_elements)}")
-                
-                # Если основной селектор не сработал, пробуем альтернативные
-                if len(metro_elements) == 0:
-                    print("🔍 Пробуем альтернативные селекторы для метро...")
-                    
-                    alternative_metro_selectors = [
-                        'span.xLPJ6',  # Альтернативный селектор
-                        'span[class*="metro"]',
-                        'span[class*="Metro"]',
-                        '[data-marker*="metro"]',
-                        'span[class*="transport"]'
-                    ]
-                    
-                    for selector in alternative_metro_selectors:
-                        try:
-                            elements = address_block.find_elements(By.CSS_SELECTOR, selector)
-                            if elements:
-                                print(f"🚇 Найдено {len(elements)} элементов с селектором: {selector}")
-                                metro_elements.extend(elements)
-                        except:
-                            continue
-                    
-                    # Если все еще ничего не найдено, проверим все span-элементы
-                    if len(metro_elements) == 0:
-                        print("🔍 Проверяем все span-элементы на наличие информации о метро...")
-                        all_spans = address_block.find_elements(By.TAG_NAME, 'span')
-                        print(f"📊 Всего span-элементов в блоке адреса: {len(all_spans)}")
-                        
-                        import re
-                        metro_pattern = r'\d+.*мин'
-                        
-                        for span in all_spans:
-                            text = span.text.strip()
-                            if text and re.search(metro_pattern, text):
-                                metro_elements.append(span)
-                                print(f"🚇 Найден элемент метро по паттерну: '{text}'")
-                
-                print(f"🚇 Итого элементов метро для обработки: {len(metro_elements)}")
-                
-                # Обрабатываем найденные элементы метро
-                for i, metro_element in enumerate(metro_elements):
-                    try:
-                        # Получаем весь текст из блока метро используя JavaScript
-                        full_metro_text = self.driver.execute_script("return arguments[0].textContent;", metro_element).strip()
-                        class_name = metro_element.get_attribute('class') or 'no-class'
-                        print(f"🚇 Обрабатываем элемент {i+1}: class='{class_name}', text='{full_metro_text}'")
-                        
-                        if not full_metro_text:
-                            print(f"⚠️ Пустой текст в элементе {i+1}")
-                            continue
-                        
-                        # Извлекаем время из текста (ищем паттерн с "мин.")
-                        time_pattern = r'(\d+(?:–\d+)?)\s*мин\.?'
-                        time_match = re.search(time_pattern, full_metro_text)
-                        
-                        if not time_match:
-                            print(f"⚠️ Не найдено время в тексте элемента {i+1}: '{full_metro_text}'")
-                            continue
-                            
-                        time_text = time_match.group(0)  # Полное совпадение (например, "6–10 мин.")
-                        time_part = time_match.group(1)  # Только числа (например, "6–10")
-                        print(f"✅ Найдено время: '{time_text}' (числа: '{time_part}')")
-                        
-                        # Извлекаем название станции - текст перед временем
-                        station_text = full_metro_text[:time_match.start()].strip()
-                        print(f"🔍 Текст станции до времени: '{station_text}'")
-                        
-                        # Обрабатываем название станции
-                        station_words = station_text.split()
-                        if station_words:
-                            # Очищаем от иконок и символов
-                            clean_words = []
-                            for word in station_words:
-                                # Удаляем элементы, состоящие только из эмодзи/символов
-                                if not re.match(r'^[🚇🟢🔵🟣⭐🏠🔷🔶]+$', word):
-                                    clean_words.append(word)
-                            
-                            if clean_words:
-                                # Берем последние 1-2 слова как название станции
-                                if len(clean_words) >= 2 and len(clean_words[-1]) <= 4:
-                                    station_name = ' '.join(clean_words[-2:])
-                                else:
-                                    station_name = clean_words[-1]
-                            else:
-                                print(f"⚠️ Не удалось очистить название станции из '{station_text}'")
-                                continue
-                        else:
-                            print(f"⚠️ Не удалось извлечь название станции из '{station_text}'")
-                            continue
-                        
-                        print(f"✅ Извлечено название станции: '{station_name}'")
-                        
-                        # Извлекаем числовое значение времени для сравнения
-                        time_minutes = self._extract_walking_time_minutes(time_text)
-                        
-                        if station_name and time_text and time_minutes is not None:
-                            metro_stations.append({
-                                'name': station_name,
-                                'walking_time': time_text,
-                                'time_minutes': time_minutes,
-                                'line_colors': []  # Можно добавить извлечение цветов линий позже
-                            })
-                            print(f"🚇 Станция {len(metro_stations)}: {station_name} - {time_text} ({time_minutes} мин)")
-                        else:
-                            print(f"⚠️ Недостаточно данных для станции {i+1}")
-                        
-                    except Exception as e:
-                        print(f"⚠️ Ошибка обработки станции метро {i+1}: {e}")
-                        continue
-                        
-            except Exception as e:
-                print(f"⚠️ Ошибка извлечения метро: {e}")
-                import traceback
-                traceback.print_exc()
-            
-            # Сортируем станции по времени (берем минимальное)
-            if metro_stations:
-                metro_stations.sort(key=lambda x: x['time_minutes'])
-                print(f"🚇 Ближайшая станция: {metro_stations[0]['name']} - {metro_stations[0]['time_minutes']} мин")
+            # Используем наш метод парсинга для текста
+            if block_text and len(block_text) > 5:
+                parsed_data = self._parse_location_section_text(block_text)
+                return parsed_data
             else:
-                print("❌ Станции метро не найдены")
-            
-            address_data['metro_stations'] = metro_stations
-            print(f"✅ Всего станций метро: {len(metro_stations)}")
-            
-            return address_data
-            
+                return {
+                    'address': 'Текст адреса пуст',
+                    'metro_station': None,
+                    'metro_time': None,
+                    'metro_way': None
+                }
+        
         except Exception as e:
-            print(f"❌ Ошибка извлечения адреса и метро: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Ошибка в старом способе извлечения: {e}")
             return {
                 'address': 'Ошибка извлечения',
-                'metro_stations': []
+                'metro_station': None,
+                'metro_time': None,
+                'metro_way': None
             }
     
     def _extract_walking_time_minutes(self, time_text):

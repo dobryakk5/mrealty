@@ -357,6 +357,49 @@ class EnhancedMetroParser:
             print(f"❌ Ошибка получения avito_id для множественных метро: {e}")
             return False
     
+    async def find_metro_id_by_name(self, metro_name):
+        """Находит ID метро по названию станции"""
+        try:
+            if not metro_name or metro_name == 'не указано':
+                return None
+
+            conn = await asyncpg.connect(self.database_url)
+
+            # Очищаем название от лишних символов
+            clean_name = metro_name.strip()
+
+            # Сначала ищем точное совпадение
+            result = await conn.fetchrow("""
+                SELECT id FROM metro
+                WHERE LOWER(name) = LOWER($1)
+                AND is_msk IS NOT FALSE
+            """, clean_name)
+
+            if result:
+                await conn.close()
+                return result['id']
+
+            # Если точное совпадение не найдено, ищем частичное
+            result = await conn.fetchrow("""
+                SELECT id FROM metro
+                WHERE LOWER(name) LIKE LOWER($1)
+                AND is_msk IS NOT FALSE
+                ORDER BY LENGTH(name) ASC
+                LIMIT 1
+            """, f'%{clean_name}%')
+
+            await conn.close()
+
+            if result:
+                return result['id']
+            else:
+                print(f"⚠️ Станция метро '{metro_name}' не найдена в БД")
+                return None
+
+        except Exception as e:
+            print(f"❌ Ошибка поиска metro_id для станции '{metro_name}': {e}")
+            return None
+
     def get_total_pages_count(self, page_content=None):
         """Определяет общее количество страниц для текущего метро из пагинации"""
         try:
@@ -1728,7 +1771,7 @@ class EnhancedMetroParser:
             print(f"      ❌ Ошибка JavaScript парсинга: {e}")
             return None
 
-    def prepare_data_for_db(self, card_data):
+    async def prepare_data_for_db(self, card_data):
         """Подготавливает данные карточки для сохранения в БД ads_avito"""
         try:
             from datetime import datetime
@@ -1813,8 +1856,22 @@ class EnhancedMetroParser:
             # Название метро остается в card_data для внутренней логики
             # db_data['metro'] = None  # Убираем название метро из БД
             
-            # ID метро из таблицы metro (добавляем для связи с таблицей metro)
-            db_data['metro_id'] = self.metro_id
+            # ID метро из таблицы metro - ищем по названию станции из объявления
+            metro_name_from_ad = card_data.get('metro_name', '')
+            if metro_name_from_ad and metro_name_from_ad != 'не указано':
+                # Пытаемся найти metro_id по названию станции из объявления
+                found_metro_id = await self.find_metro_id_by_name(metro_name_from_ad)
+                if found_metro_id:
+                    db_data['metro_id'] = found_metro_id
+                    print(f"   ✅ Найдено metro_id={found_metro_id} для станции '{metro_name_from_ad}'")
+                else:
+                    # Если не нашли, используем metro_id парсера по умолчанию
+                    db_data['metro_id'] = self.metro_id
+                    print(f"   ⚠️ Станция '{metro_name_from_ad}' не найдена, используем metro_id={self.metro_id}")
+            else:
+                # Если название метро не указано, используем metro_id парсера
+                db_data['metro_id'] = self.metro_id
+                print(f"   📍 Название метро не указано, используем metro_id={self.metro_id}")
             
             # Время до метро
             time_to_metro = card_data.get('time_to_metro', '')
@@ -1826,10 +1883,16 @@ class EnhancedMetroParser:
             else:
                 db_data['walk_minutes'] = None
             
-            # Адрес - берем полный адрес из card_data['address'] или street_house
-            address = card_data.get('address', '')
+            # Адрес - берем только street_house (без метро)
+            address = card_data.get('street_house', '')
             if not address or address == "Не найдено":
-                address = card_data.get('street_house', '')
+                # Fallback: если street_house нет, берем полный адрес и отделяем первую строку
+                full_address = card_data.get('address', '')
+                if full_address and full_address != "Не найдено":
+                    # Берем только первую строку (до переноса)
+                    address = full_address.split('\n')[0].strip()
+                else:
+                    address = ''
             db_data['address'] = address
             
             # Теги - парсим из характеристик карточки
@@ -2968,7 +3031,7 @@ class EnhancedMetroParser:
             for i, card in enumerate(parsed_cards):
                 try:
                     # Подготавливаем данные для БД
-                    db_data = self.prepare_data_for_db(card)
+                    db_data = await self.prepare_data_for_db(card)
                     if db_data:
                         # Сохраняем в БД
                         await save_avito_ad(db_data)
@@ -3326,7 +3389,7 @@ class EnhancedMetroParser:
                         for i, card in enumerate(page_cards):
                             try:
                                 # Подготавливаем данные для БД
-                                db_data = self.prepare_data_for_db(card)
+                                db_data = await self.prepare_data_for_db(card)
                                 if db_data:
                                     # Сохраняем в БД
                                     await save_avito_ad(db_data)

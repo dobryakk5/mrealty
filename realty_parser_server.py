@@ -33,6 +33,14 @@ except ImportError:
     YANDEX_AVAILABLE = False
     print("⚠️ Модуль yandex_parser_integration не найден, парсинг Yandex недоступен")
 
+# Импортируем парсер Baza Winner
+try:
+    from baza_winner_parser import BazaWinnerParser
+    BAZA_WINNER_AVAILABLE = True
+except ImportError:
+    BAZA_WINNER_AVAILABLE = False
+    print("⚠️ Модуль baza_winner_parser не найден, парсинг Baza Winner недоступен")
+
 # Заголовки для HTTP-запросов
 HEADERS = {
     'User-Agent': (
@@ -68,6 +76,7 @@ class PropertyData:
     address: Optional[str] = None
     metro_station: Optional[str] = None
     metro_time: Optional[Union[int, str]] = None  # Can be int (minutes) or str (formatted like "6 Текстильщики")
+    metro_way: Optional[str] = None  # Способ добраться до метро (пешком, транспорт)
     
     # Дополнительно
     tags: Optional[List[str]] = None
@@ -77,7 +86,7 @@ class PropertyData:
     # Метаданные
     source: Optional[str] = None  # 'avito', 'cian', 'yandex'
     url: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[bool] = None  # Статус активности объявления
     views_today: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -94,6 +103,15 @@ class ParseUrlsRequest(BaseModel):
 
 class ParseTextRequest(BaseModel):
     text: str
+
+class BazaWinnerAuthRequest(BaseModel):
+    username: str
+    password: str
+
+class BazaWinnerSearchRequest(BaseModel):
+    username: str
+    password: str
+    search_params: Dict[str, Any] = {}
 
 class ParseResponse(BaseModel):
     success: bool
@@ -155,6 +173,19 @@ class RealtyParserAPI:
         else:
             return 'unknown'
     
+    def _determine_status(self, status_str: Optional[str]) -> bool:
+        """Определяет активность объявления по строковому статусу"""
+        if not status_str:
+            return True  # По умолчанию считаем активным
+        
+        status_lower = status_str.lower().strip()
+        inactive_statuses = [
+            'снято', 'неактивно', 'архив', 'удалено', 
+            'продано', 'сдано', 'неактуальное', 'заблокировано'
+        ]
+        
+        return not any(inactive_status in status_lower for inactive_status in inactive_statuses)
+    
     async def parse_property(self, url: str, skip_photos: bool = True) -> Optional[PropertyData]:
         """
         Универсальный метод для парсинга объявлений
@@ -208,22 +239,27 @@ class RealtyParserAPI:
             # Создаем парсер Avito с параметром skip_photos
             parser = AvitoCardParser(skip_photos=skip_photos)
             
-            # Парсим полную страницу объявления
-            parsed_data = parser.parse_avito_page(url)
+            # Используем только Selenium парсинг (HTTP вариант блокируется)
+            parsed_data = await parser.parse_avito_page(url)
             if not parsed_data:
                 print("❌ Не удалось спарсить данные объявления Avito")
                 return None
             
-            # Преобразуем данные в формат для БД
+            # Подготавливаем данные для БД
             db_data = parser.prepare_data_for_db(parsed_data)
+            print("✅ Использованы данные Selenium парсинга")
             if not db_data:
                 print("❌ Не удалось подготовить данные для БД")
                 return None
             
             # Создаем структурированный объект
+            # Если нет цены в Avito, то объявление неактивно
+            price = db_data.get('price')
+            is_active = price is not None and price != "" and price != 0
+            
             property_data = PropertyData(
                 rooms=db_data.get('rooms'),
-                price=db_data.get('price'),
+                price=price,
                 total_area=db_data.get('total_area'),
                 living_area=db_data.get('living_area'),
                 kitchen_area=db_data.get('kitchen_area'),
@@ -237,14 +273,15 @@ class RealtyParserAPI:
                 ceiling_height=db_data.get('ceiling_height'),
                 furniture=db_data.get('furniture'),
                 address=db_data.get('address'),
-                metro_station=self._extract_station_from_metro_time(db_data.get('metro_time')),  # Extract station name from metro_time
-                metro_time=self._extract_minutes_from_metro_time(db_data.get('metro_time')),      # Extract minutes from metro_time
+                metro_station=db_data.get('metro_station'),
+                metro_time=db_data.get('metro_time'),
+                metro_way=db_data.get('metro_way'),
                 tags=db_data.get('tags'),
                 description=db_data.get('description'),
                 photo_urls=db_data.get('photo_urls'),
                 source='avito',
                 url=url,
-                status='active',
+                status=is_active,
                 views_today=db_data.get('today_views')
             )
             
@@ -306,7 +343,7 @@ class RealtyParserAPI:
                 description=db_data.get('description'),
                 source='yandex',
                 url=url,
-                status=db_data.get('status', 'active'),
+                status=self._determine_status(db_data.get('status', 'active')),
                 views_today=db_data.get('views')  # Yandex views are today's views, not total
             )
             
@@ -365,7 +402,7 @@ class RealtyParserAPI:
                 photo_urls=data.get('photo_urls', []),
                 source='cian',
                 url=url,
-                status=data.get('Статус', 'active'),
+                status=self._determine_status(data.get('Статус', 'active')),
                 views_today=data.get('Просмотров сегодня')
             )
             
