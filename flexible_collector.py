@@ -36,6 +36,9 @@ BUILDING_TYPE = "old_only"  # old_only, new_only, all
 # Тип продавца
 SELLER_TYPE = "all"  # all, owner_only
 
+# Статус сделки
+DEAL_STATUS = "active"  # active, inactive, all
+
 # Цены (в рублях, None = без ограничения)
 MIN_PRICE = None
 MAX_PRICE = None
@@ -335,6 +338,25 @@ class FlexibleCollector:
             del payload["conditions"]["is_studio"]
         return payload
 
+    # ========== ФИЛЬТРЫ СТАТУСА СДЕЛКИ ==========
+
+    def set_deal_active(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Только активные объявления"""
+        payload["conditions"]["is_deal_actual"] = True
+        return payload
+
+    def set_deal_inactive(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Только неактивные/снятые объявления"""
+        payload["conditions"]["is_deal_actual"] = False
+        return payload
+
+    def set_deal_all(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Все объявления (активные и неактивные)"""
+        # Убираем фильтр is_deal_actual вообще
+        if "is_deal_actual" in payload["conditions"]:
+            del payload["conditions"]["is_deal_actual"]
+        return payload
+
 
     # ========== ОСНОВНОЙ МЕТОД СОЗДАНИЯ ЗАПРОСА ==========
     
@@ -353,6 +375,8 @@ class FlexibleCollector:
                             studio: str = "all",  # all, studio_only, no_studio
                             # Тип продавца
                             seller_type: str = "all",  # all, owner_only
+                            # Статус сделки
+                            deal_status: str = "active",  # active, inactive, all
                             # Цены
                             min_price: Optional[int] = None,
                             max_price: Optional[int] = None,
@@ -369,6 +393,7 @@ class FlexibleCollector:
         - building_type: "old_only", "new_only", "all"
         - studio: "all", "studio_only", "no_studio"
         - seller_type: "all", "owner_only"
+        - deal_status: "active", "inactive", "all"
         - min_price, max_price: диапазон цен в рублях
         """
         
@@ -437,11 +462,19 @@ class FlexibleCollector:
             payload = self.set_owner_only(payload)
         elif seller_type == "all":
             payload = self.set_all_sellers(payload)
-        
+
+        # Применяем фильтры статуса сделки
+        if deal_status == "active":
+            payload = self.set_deal_active(payload)
+        elif deal_status == "inactive":
+            payload = self.set_deal_inactive(payload)
+        elif deal_status == "all":
+            payload = self.set_deal_all(payload)
+
         # Применяем фильтры цен
         if min_price is not None or max_price is not None:
             payload = self.set_price_range(payload, min_price, max_price)
-        
+
         return payload
 
     async def search(self, **search_params) -> Optional[Dict[str, Any]]:
@@ -597,6 +630,32 @@ async def example_no_studios():
         ads = result.get('advs', [])
         print(f"📊 Получено {len(ads)} 1к квартир без студий")
 
+async def example_inactive_deals():
+    """Пример: поиск снятых объявлений"""
+
+    collector = FlexibleCollector()
+
+    result = await collector.search(
+        location="moscow_old_only",       # Старая Москва
+        media="all",                      # Все источники
+        rooms="1k",                       # 1-комнатные
+        building_type="old_only",         # Только вторичка
+        deal_status="inactive",           # ТОЛЬКО СНЯТЫЕ ОБЪЯВЛЕНИЯ
+        seller_type="all",                # Все продавцы
+        published_days_ago=30,            # За последние 30 дней
+        size=400                          # Размер выборки
+    )
+
+    if result:
+        ads = result.get('advs', [])
+        print(f"📊 Получено {len(ads)} снятых объявлений за 30 дней")
+
+        # Сохраняем результат
+        filename = f"inactive_deals_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        print(f"💾 Сохранено в: {filename}")
+
 def parse_args():
     """Парсинг аргументов командной строки"""
     parser = argparse.ArgumentParser(description='Гибкий сборщик недвижимости')
@@ -606,6 +665,9 @@ def parse_args():
 
     parser.add_argument('--rooms', type=str, default=','.join(map(str, ROOMS)),
                        help=f'Комнаты через запятую, 0=студии (по умолчанию: {",".join(map(str, ROOMS))})')
+
+    parser.add_argument('--inactive', action='store_true',
+                       help='Искать только снятые объявления')
 
     return parser.parse_args()
 
@@ -618,6 +680,7 @@ async def main():
     # Переопределяем настройки из аргументов
     days = args.days
     rooms = [int(r.strip()) for r in args.rooms.split(',') if r.strip().isdigit()]
+    deal_status = "inactive" if args.inactive else DEAL_STATUS
 
     rooms_desc = ', '.join([f"{'студии' if r == 0 else f'{r}к'}" for r in rooms])
     print(f"🏠 СБОР КВАРТИР: {rooms_desc.upper()}")
@@ -625,6 +688,7 @@ async def main():
     print(f"📺 Источники: {MEDIA}")
     print(f"🏢 Тип зданий: {BUILDING_TYPE}")
     print(f"👤 Продавцы: {SELLER_TYPE}")
+    print(f"📊 Статус сделок: {deal_status}")
     print(f"📅 Период: {days} дней")
     print("=" * 60)
 
@@ -644,6 +708,7 @@ async def main():
             rooms=rooms,                      # Используем аргумент
             building_type=BUILDING_TYPE,      # Используем переменную
             seller_type=SELLER_TYPE,          # Используем переменную
+            deal_status=deal_status,          # Используем аргумент
             min_price=MIN_PRICE,              # Используем переменную
             max_price=MAX_PRICE,              # Используем переменную
             published_days_ago=days           # Используем аргумент
