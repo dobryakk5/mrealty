@@ -110,6 +110,14 @@ def extract_listing_comments(text: str, urls: list[str]) -> list[str]:
 
 async def handle_text_message(message: Message):
     text = message.text.strip()
+
+    # Проверка на запрос кабинета
+    if "кабинет" in text.lower():
+        user_id = message.from_user.id
+        cabinet_url = f"https://mrealty.netlify.app/link?i={user_id}"
+        await message.answer(f"🏢 Ваш личный кабинет: {cabinet_url}")
+        return
+
     is_selection_request = "подбор" in text.lower()
     use_embedded = "подбор" in text.lower() and "подбор-" not in text.lower()  # "подбор" = встроенные, "подбор-" = обычные
     urls, url_count = extract_urls(text)
