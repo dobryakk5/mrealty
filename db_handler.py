@@ -303,3 +303,23 @@ async def call_update_ad(price: int | None, is_actual: int | None, code: int, ur
         await conn.execute(query, price, is_actual, code, url_id)
 
 
+async def get_web_domain() -> str:
+    """
+    Получает домен из таблицы users.params для параметра 'web'
+    Возвращает домен без завершающего слэша
+    """
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        record = await conn.fetchrow(
+            "SELECT data FROM users.params WHERE code = 'web'"
+        )
+
+        if record and record['data']:
+            domain = record['data'].strip()
+            # Убираем завершающий слэш если есть
+            return domain.rstrip('/')
+        else:
+            # Возвращаем домен по умолчанию если не найден в БД
+            return "https://mrealty.netlify.app"
+
+

@@ -1,7 +1,7 @@
 # text_handlers.py
 from aiogram.types import Message, BufferedInputFile
 from listings_processor import listings_processor, export_listings_to_excel, extract_urls
-from db_handler import find_similar_ads_grouped
+from db_handler import find_similar_ads_grouped, get_web_domain
 import io
 import pandas as pd
 from openpyxl import Workbook
@@ -114,8 +114,15 @@ async def handle_text_message(message: Message):
     # Проверка на запрос кабинета
     if "кабинет" in text.lower():
         user_id = message.from_user.id
-        cabinet_url = f"https://mrealty.netlify.app/link?i={user_id}"
-        await message.answer(f"🏢 Ваш личный кабинет: {cabinet_url}")
+        try:
+            domain = await get_web_domain()
+            cabinet_url = f"{domain}/link?i={user_id}"
+            await message.answer(f"🚪 Ваш личный кабинет: {cabinet_url}")
+        except Exception as e:
+            print(f"Ошибка при получении домена из БД: {e}")
+            # Используем домен по умолчанию в случае ошибки
+            cabinet_url = f"https://mrealty.netlify.app/link?i={user_id}"
+            await message.answer(f"🚪 Ваш личный кабинет: {cabinet_url}")
         return
 
     is_selection_request = "подбор" in text.lower()
