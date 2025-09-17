@@ -916,78 +916,106 @@ class PersistentAvitoBrowser:
             print("✅ Cookies применены")
             print("🏠 Остаемся на главной Avito для постоянной сессии")
 
+            # Дополнительная задержка для полной готовности браузера
+            time.sleep(3)
+
         except Exception as e:
             print(f"❌ Ошибка загрузки cookies: {e}")
 
-    def parse_url(self, url):
+    def parse_url(self, url, max_retries=2):
         """Быстро парсит URL с уже открытым браузером"""
         if not self.setup_browser():
             return None
 
-        try:
-            self.last_activity = time.time()
-
-            print(f"🔄 Парсим: {url}")
-            start_time = time.time()
-
-            # Переходим на страницу
-            self.driver.get(url)
-
-            # Минимальная задержка
-            time.sleep(1)
-
-            # Получаем данные
-            data = {}
-
-            # Заголовок
+        for attempt in range(max_retries + 1):
             try:
-                data['title'] = self.driver.title
-            except:
-                pass
+                self.last_activity = time.time()
 
-            # H1
-            try:
-                h1_element = self.driver.find_element("tag name", "h1")
-                data['h1'] = h1_element.text.strip()
-            except:
-                pass
+                print(f"🔄 Парсим: {url}")
+                start_time = time.time()
 
-            # Цена
-            try:
-                price_selectors = [
-                    '[data-marker="item-view/item-price"]',
-                    '[class*="price"]',
-                    '[data-testid*="price"]'
-                ]
+                # Проверяем готовность браузера
+                if not self._is_browser_ready():
+                    print("⚠️ Браузер не готов, ждем...")
+                    time.sleep(3)
+                    continue
 
-                for selector in price_selectors:
-                    try:
-                        price_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                        for el in price_elements:
-                            if el.is_displayed() and el.text.strip():
-                                data['price'] = el.text.strip()
+                # Переходим на страницу с таймаутом
+                self.driver.set_page_load_timeout(15)
+                self.driver.get(url)
+
+                # Минимальная задержка
+                time.sleep(1)
+
+                # Получаем данные
+                data = {}
+
+                # Заголовок
+                try:
+                    data['title'] = self.driver.title
+                except:
+                    pass
+
+                # H1
+                try:
+                    h1_element = self.driver.find_element("tag name", "h1")
+                    data['h1'] = h1_element.text.strip()
+                except:
+                    pass
+
+                # Цена
+                try:
+                    price_selectors = [
+                        '[data-marker="item-view/item-price"]',
+                        '[class*="price"]',
+                        '[data-testid*="price"]'
+                    ]
+
+                    for selector in price_selectors:
+                        try:
+                            price_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                            for el in price_elements:
+                                if el.is_displayed() and el.text.strip():
+                                    data['price'] = el.text.strip()
+                                    break
+                            if 'price' in data:
                                 break
-                        if 'price' in data:
-                            break
-                    except:
-                        continue
-            except:
-                pass
+                        except:
+                            continue
+                except:
+                    pass
 
-            # Парсим из текста
-            text = data.get('h1', '') or data.get('title', '')
-            if text:
-                parsed_data = self._extract_from_text(text)
-                data.update(parsed_data)
+                # Парсим из текста
+                text = data.get('h1', '') or data.get('title', '')
+                if text:
+                    parsed_data = self._extract_from_text(text)
+                    data.update(parsed_data)
 
-            parse_time = time.time() - start_time
-            print(f"⏱️ Парсинг занял: {parse_time:.2f} сек")
+                parse_time = time.time() - start_time
+                print(f"⏱️ Парсинг занял: {parse_time:.2f} сек")
 
-            return data
+                return data
 
+            except Exception as e:
+                print(f"❌ Ошибка парсинга (попытка {attempt + 1}/{max_retries + 1}): {e}")
+                if attempt < max_retries:
+                    print("🔄 Повторяем через 2 секунды...")
+                    time.sleep(2)
+                    continue
+                else:
+                    return None
+
+        return None
+
+    def _is_browser_ready(self):
+        """Проверяет готовность браузера к работе (быстрая проверка)"""
+        try:
+            # Проверяем только current_url - самая быстрая проверка
+            self.driver.current_url
+            return True
         except Exception as e:
-            print(f"❌ Ошибка парсинга: {e}")
-            return None
+            print(f"⚠️ Браузер не готов: {e}")
+            return False
 
     def _extract_from_text(self, text):
         """Извлекает данные из текста"""
