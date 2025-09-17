@@ -19,9 +19,11 @@ from pydantic import BaseModel
 import uvicorn
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 import os
-from persistent_avito_parser import parse_avito_fast, get_persistent_browser
 import threading
+import signal
+import atexit
 
 # Импортируем парсер Avito
 try:
@@ -766,6 +768,328 @@ class RealtyParserAPI:
     def __del__(self):
         """Деструктор для автоматической очистки"""
         self.cleanup()
+
+
+# ===============================================
+# PERSISTENT BROWSER CLASS (встроенный)
+# ===============================================
+
+class PersistentAvitoBrowser:
+    """Persistent браузер для Avito с cookies"""
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        """Singleton pattern для единственного браузера"""
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if hasattr(self, 'initialized'):
+            return
+
+        self.driver = None
+        self.cookies_file = "avito_cookies.json"
+        self.initialized = False
+        self.last_activity = time.time()
+        self.session_timeout = 86400  # 24 часа без активности (практически навсегда)
+
+        # НЕ регистрируем cleanup при выходе для "навсегда" режима
+        # atexit.register(self.cleanup)  # Закомментировано для постоянной работы
+        print("🔄 Persistent браузер инициализирован для постоянной работы")
+
+    def setup_browser(self):
+        """Настраивает и запускает браузер"""
+        if self.driver and self._is_browser_alive():
+            print("✅ Браузер уже запущен")
+            return True
+
+        try:
+            print("🔧 Запускаем persistent браузер...")
+
+            options = Options()
+
+            # Проверяем есть ли cookies для headless режима
+            has_cookies = os.path.exists(self.cookies_file)
+
+            if has_cookies:
+                # С cookies можем использовать headless для экономии памяти
+                options.add_argument("--headless=new")
+                print("🔒 Режим headless (есть cookies)")
+            else:
+                # Без cookies лучше обычный режим для обхода блокировок
+                print("👁️ Обычный режим (нет cookies)")
+
+            # Базовые настройки
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-plugins")
+            options.add_argument("--disable-images")  # Не загружаем изображения
+            options.add_argument("--memory-pressure-off")  # Отключаем сборку мусора по памяти
+            options.add_argument("--max_old_space_size=512")  # Ограничиваем память V8
+            options.add_argument("--window-size=1280,720")
+
+            # User-Agent для обхода блокировок
+            options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+            # Отключаем webdriver флаги
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option('useAutomationExtension', False)
+
+            # Chrome binary path
+            if os.path.exists("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"):
+                options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            else:
+                options.binary_location = "/opt/google/chrome/google-chrome"
+
+            self.driver = webdriver.Chrome(options=options)
+            self.driver.set_page_load_timeout(30)
+            self.driver.implicitly_wait(5)
+
+            # Убираем webdriver property
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+            # Загружаем cookies
+            self._load_and_apply_cookies()
+
+            self.initialized = True
+            self.last_activity = time.time()
+
+            print("✅ Persistent браузер готов к работе")
+            return True
+
+        except Exception as e:
+            print(f"❌ Ошибка запуска браузера: {e}")
+            return False
+
+    def _is_browser_alive(self):
+        """Проверяет, жив ли браузер"""
+        try:
+            if not self.driver:
+                return False
+            # Простая проверка - получаем текущий URL
+            _ = self.driver.current_url
+            return True
+        except:
+            return False
+
+    def _load_and_apply_cookies(self):
+        """Загружает и применяет cookies"""
+        try:
+            if not os.path.exists(self.cookies_file):
+                print("⚠️ Файл cookies не найден, создайте его вручно")
+                return
+
+            # Сначала идем на главную Avito для установки cookies
+            print("🍪 Загружаем главную страницу для cookies...")
+            self.driver.get("https://www.avito.ru/")
+            time.sleep(2)
+
+            # Загружаем cookies из файла
+            with open(self.cookies_file, 'r', encoding='utf-8') as f:
+                cookies_data = json.load(f)
+
+            # Применяем cookies
+            if 'cookies' in cookies_data:
+                cookies_list = cookies_data['cookies']
+            else:
+                cookies_list = cookies_data
+
+            for cookie in cookies_list:
+                try:
+                    self.driver.add_cookie(cookie)
+                except Exception as e:
+                    print(f"⚠️ Не удалось добавить cookie: {e}")
+
+            # Обновляем страницу для применения cookies
+            self.driver.refresh()
+            time.sleep(1)
+
+            print("✅ Cookies применены")
+            print("🏠 Остаемся на главной Avito для постоянной сессии")
+
+        except Exception as e:
+            print(f"❌ Ошибка загрузки cookies: {e}")
+
+    def parse_url(self, url):
+        """Быстро парсит URL с уже открытым браузером"""
+        if not self.setup_browser():
+            return None
+
+        try:
+            self.last_activity = time.time()
+
+            print(f"🔄 Парсим: {url}")
+            start_time = time.time()
+
+            # Переходим на страницу
+            self.driver.get(url)
+
+            # Минимальная задержка
+            time.sleep(1)
+
+            # Получаем данные
+            data = {}
+
+            # Заголовок
+            try:
+                data['title'] = self.driver.title
+            except:
+                pass
+
+            # H1
+            try:
+                h1_element = self.driver.find_element("tag name", "h1")
+                data['h1'] = h1_element.text.strip()
+            except:
+                pass
+
+            # Цена
+            try:
+                price_selectors = [
+                    '[data-marker="item-view/item-price"]',
+                    '[class*="price"]',
+                    '[data-testid*="price"]'
+                ]
+
+                for selector in price_selectors:
+                    try:
+                        price_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        for el in price_elements:
+                            if el.is_displayed() and el.text.strip():
+                                data['price'] = el.text.strip()
+                                break
+                        if 'price' in data:
+                            break
+                    except:
+                        continue
+            except:
+                pass
+
+            # Парсим из текста
+            text = data.get('h1', '') or data.get('title', '')
+            if text:
+                parsed_data = self._extract_from_text(text)
+                data.update(parsed_data)
+
+            parse_time = time.time() - start_time
+            print(f"⏱️ Парсинг занял: {parse_time:.2f} сек")
+
+            return data
+
+        except Exception as e:
+            print(f"❌ Ошибка парсинга: {e}")
+            return None
+
+    def _extract_from_text(self, text):
+        """Извлекает данные из текста"""
+        data = {}
+
+        # Комнаты
+        rooms_match = re.search(r'(\d+)-к\.', text)
+        if rooms_match:
+            data['rooms'] = int(rooms_match.group(1))
+
+        # Студии/апартаменты
+        if re.search(r'\bстудия\b|\bапартаменты\b', text.lower()):
+            data['rooms'] = 0
+
+        # Площадь
+        area_match = re.search(r'(\d+(?:[.,]\d+)?)\s*м²', text)
+        if area_match:
+            area_str = area_match.group(1).replace(',', '.')
+            data['total_area'] = float(area_str)
+
+        # Этаж
+        floor_match = re.search(r'(\d+)/(\d+)\s*эт\.', text)
+        if floor_match:
+            data['floor'] = floor_match.group(1)
+            data['total_floors'] = int(floor_match.group(2))
+
+        return data
+
+    def is_session_expired(self):
+        """Проверяет, истекла ли сессия"""
+        return time.time() - self.last_activity > self.session_timeout
+
+    def get_session_info(self):
+        """Возвращает информацию о текущей сессии"""
+        if not self.driver:
+            return {"status": "not_started", "message": "Браузер не запущен"}
+
+        try:
+            current_url = self.driver.current_url
+            title = self.driver.title
+            session_age = time.time() - self.last_activity
+
+            return {
+                "status": "active",
+                "url": current_url,
+                "title": title,
+                "session_age_minutes": round(session_age / 60, 1),
+                "is_on_avito": 'avito.ru' in current_url,
+                "last_activity": self.last_activity
+            }
+        except:
+            return {"status": "error", "message": "Ошибка получения информации о сессии"}
+
+    def refresh_session(self):
+        """Обновляет сессию"""
+        if self.is_session_expired() or not self._is_browser_alive():
+            print("🔄 Обновляем браузер сессию...")
+            self.cleanup()
+            return self.setup_browser()
+
+        # Проверяем, что мы все еще на Avito
+        try:
+            current_url = self.driver.current_url
+            if not ('avito.ru' in current_url):
+                print("🔄 Возвращаемся на главную Avito...")
+                self.driver.get("https://www.avito.ru/")
+                time.sleep(1)
+        except:
+            pass
+
+        return True
+
+    def cleanup(self):
+        """Закрывает браузер"""
+        try:
+            if self.driver:
+                print("🧹 Закрываем persistent браузер...")
+                self.driver.quit()
+                self.driver = None
+                print("✅ Браузер закрыт")
+        except Exception as e:
+            print(f"⚠️ Ошибка закрытия браузера: {e}")
+
+    def __del__(self):
+        self.cleanup()
+
+
+# Глобальный экземпляр
+_browser = None
+
+def get_persistent_browser():
+    """Получает экземпляр persistent браузера"""
+    global _browser
+    if _browser is None:
+        _browser = PersistentAvitoBrowser()
+    return _browser
+
+def parse_avito_fast(url):
+    """Быстрый парсинг через persistent браузер"""
+    browser = get_persistent_browser()
+    if not browser.refresh_session():
+        return None
+    return browser.parse_url(url)
 
 # Создаем экземпляр парсера
 parser = RealtyParserAPI()
