@@ -46,7 +46,10 @@ class YandexCardParser:
             chrome_options.add_experimental_option("prefs", prefs)
             
             # Явно указываем путь к Chrome binary
-            chrome_options.binary_location = "/opt/google/chrome/google-chrome"
+            if os.path.exists("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"):
+                chrome_options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            else:
+                chrome_options.binary_location = "/opt/google/chrome/google-chrome"
             
             print("🔧 Создаем браузер...")
             self.driver = webdriver.Chrome(options=chrome_options)

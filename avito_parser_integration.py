@@ -80,7 +80,10 @@ class AvitoCardParser:
             options.add_experimental_option('useAutomationExtension', False)
 
             # Явно указываем путь к Chrome binary
-            options.binary_location = "/opt/google/chrome/google-chrome"
+            if os.path.exists("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"):
+                options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            else:
+                options.binary_location = "/opt/google/chrome/google-chrome"
 
             print("🔧 Создаем браузер...")
             self.driver = webdriver.Chrome(options=options)

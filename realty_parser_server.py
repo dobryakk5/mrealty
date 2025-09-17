@@ -16,6 +16,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+import os
 
 # Импортируем парсер Avito
 try:
@@ -204,7 +207,26 @@ class RealtyParserAPI:
         except Exception as e:
             print(f"❌ Ошибка парсинга {url}: {e}")
             return None
-    
+
+    async def parse_property_extended(self, url: str, skip_photos: bool = True) -> Optional[PropertyData]:
+        """
+        Расширенный парсинг объявления с полными данными
+        Возвращает структурированные данные PropertyData
+        """
+        try:
+            if self.is_avito_url(url):
+                return await self._parse_avito_extended(url, skip_photos=skip_photos)
+            elif self.is_cian_url(url):
+                return await self._parse_cian_property(url)
+            elif self.is_yandex_url(url):
+                return await self._parse_yandex_property(url)
+            else:
+                print(f"⚠️ Неизвестный источник ссылки: {url}")
+                return None
+        except Exception as e:
+            print(f"❌ Ошибка расширенного парсинга {url}: {e}")
+            return None
+
     async def parse_properties_batch(self, urls: List[str], skip_photos: bool = True) -> List[PropertyData]:
         """
         Пакетный парсинг множественных объявлений
@@ -226,25 +248,144 @@ class RealtyParserAPI:
         
         print(f"📊 Всего успешно спарсено: {len(results)} из {len(urls)}")
         return results
-    
+
+    async def _parse_avito_light(self, url: str) -> Optional[PropertyData]:
+        """Легкий парсер Avito - извлекает данные только из заголовка страницы"""
+        driver = None
+        try:
+            print(f"🔍 Легкий парсинг Avito: {url}")
+
+            # Настройки Chrome
+            options = Options()
+            options.add_argument("--headless=new")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--window-size=1920,1080")
+
+            # Путь к Chrome binary
+            if os.path.exists("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"):
+                options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            else:
+                options.binary_location = "/opt/google/chrome/google-chrome"
+
+            # Создаем драйвер
+            driver = webdriver.Chrome(options=options)
+            driver.set_page_load_timeout(30)
+
+            # Загружаем страницу
+            driver.get(url)
+
+            # Получаем заголовок и H1
+            title = driver.title
+            print(f"📄 Заголовок: {title}")
+
+            try:
+                h1_element = driver.find_element("tag name", "h1")
+                h1_text = h1_element.text.strip()
+                print(f"📝 H1: {h1_text}")
+            except:
+                h1_text = ""
+
+            # Парсим данные из заголовка и H1
+            parsed_data = self._extract_data_from_title(title, h1_text)
+
+            if parsed_data:
+                # Определяем статус: активно если есть информация о комнатах (включая 0 для студий/апартаментов)
+                has_rooms = parsed_data.get('rooms') is not None
+                status = has_rooms
+
+                print(f"📊 Статус объявления: {'активно' if status else 'неактивно'} (комнаты: {parsed_data.get('rooms')})")
+
+                # Создаем объект PropertyData
+                property_data = PropertyData(
+                    rooms=parsed_data.get('rooms'),
+                    total_area=parsed_data.get('total_area'),
+                    floor=parsed_data.get('floor'),
+                    total_floors=parsed_data.get('total_floors'),
+                    source='avito',
+                    url=url,
+                    status=status
+                )
+
+                print("✅ Легкий парсинг успешен")
+                return property_data
+            else:
+                return None
+
+        except Exception as e:
+            print(f"❌ Ошибка легкого парсинга: {e}")
+            return None
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+
+    def _extract_data_from_title(self, title: str, h1: str) -> Optional[Dict[str, Any]]:
+        """Извлекает данные из заголовка и H1 Avito"""
+        try:
+            # Используем H1 как основной источник, если он есть, иначе title
+            text = h1 if h1 else title
+            print(f"🔍 Анализируем текст: {text}")
+
+            data = {}
+
+            # Извлекаем количество комнат: "1-к.", "2-к.", "3-к." и т.д.
+            rooms_match = re.search(r'(\d+)-к\.', text)
+            if rooms_match:
+                data['rooms'] = int(rooms_match.group(1))
+                print(f"🏠 Комнат: {data['rooms']}")
+
+            # Проверяем студии и апартаменты (0 комнат)
+            if re.search(r'\bстудия\b|\bапартаменты\b', text.lower()):
+                data['rooms'] = 0
+                print(f"🏠 Тип жилья: {'студия' if 'студия' in text.lower() else 'апартаменты'} (комнат: 0)")
+
+            # Извлекаем площадь: "29,5 м²", "45.2 м²"
+            area_match = re.search(r'(\d+(?:[.,]\d+)?)\s*м²', text)
+            if area_match:
+                area_str = area_match.group(1).replace(',', '.')
+                data['total_area'] = float(area_str)
+                print(f"📐 Площадь: {data['total_area']} м²")
+
+            # Извлекаем этаж: "3/5 эт.", "12/25 эт."
+            floor_match = re.search(r'(\d+)/(\d+)\s*эт\.', text)
+            if floor_match:
+                data['floor'] = floor_match.group(1)
+                data['total_floors'] = int(floor_match.group(2))
+                print(f"🏢 Этаж: {data['floor']}/{data['total_floors']}")
+
+            return data if data else None
+
+        except Exception as e:
+            print(f"❌ Ошибка извлечения данных: {e}")
+            return None
+
     async def _parse_avito_property(self, url: str, skip_photos: bool = True) -> Optional[PropertyData]:
-        """Парсит объявление с Avito"""
+        """Парсит объявление с Avito (только легкий парсер)"""
+        return await self._parse_avito_light(url)
+
+    async def _parse_avito_extended(self, url: str, skip_photos: bool = True) -> Optional[PropertyData]:
+        """Расширенный парсинг объявления с Avito (полный парсер)"""
         if not AVITO_AVAILABLE:
             print("❌ Парсер Avito недоступен")
             return None
-        
+
         try:
-            print(f"🏠 Парсим объявление Avito: {url}")
-            
+            print(f"🏠 Парсим объявление Avito (расширенный парсер): {url}")
+
             # Создаем парсер Avito с параметром skip_photos
             parser = AvitoCardParser(skip_photos=skip_photos)
-            
+
             # Используем только Selenium парсинг (HTTP вариант блокируется)
-            parsed_data = await parser.parse_avito_page(url)
+            parsed_data = parser.parse_avito_page(url)
             if not parsed_data:
                 print("❌ Не удалось спарсить данные объявления Avito")
                 return None
-            
+
             # Подготавливаем данные для БД
             db_data = parser.prepare_data_for_db(parsed_data)
             print("✅ Использованы данные Selenium парсинга")
@@ -691,19 +832,35 @@ async def parse_from_text(request: ParseTextRequest):
 
 @app.get("/api/parse/single")
 async def parse_single_property(url: str):
-    """Парсинг одного объявления по URL"""
+    """Парсинг одного объявления по URL (быстрый режим)"""
     try:
         property_data = await parser.parse_property(url)
         if property_data:
             return {
                 "success": True,
                 "data": property_data.to_dict(),
-                "message": "Объявление успешно спарсено"
+                "message": "Объявление успешно спарсено (быстрый режим)"
             }
         else:
             raise HTTPException(status_code=400, detail="Не удалось спарсить объявление")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка парсинга: {str(e)}")
+
+@app.get("/api/parse/extended")
+async def parse_extended_property(url: str):
+    """Расширенный парсинг одного объявления по URL (полные данные)"""
+    try:
+        property_data = await parser.parse_property_extended(url)
+        if property_data:
+            return {
+                "success": True,
+                "data": property_data.to_dict(),
+                "message": "Объявление успешно спарсено (расширенный режим)"
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Не удалось спарсить объявление")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка расширенного парсинга: {str(e)}")
 
 @app.get("/api/health")
 async def health_check():
@@ -746,6 +903,10 @@ async def get_supported_sources():
 async def parse_property(url: str) -> Optional[PropertyData]:
     """Быстрый парсинг одного объявления"""
     return await parser.parse_property(url)
+
+async def parse_property_extended(url: str) -> Optional[PropertyData]:
+    """Расширенный парсинг одного объявления"""
+    return await parser.parse_property_extended(url)
 
 async def parse_properties_batch(urls: List[str]) -> List[PropertyData]:
     """Быстрый пакетный парсинг"""
