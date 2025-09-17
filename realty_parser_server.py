@@ -14,11 +14,14 @@ import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 import os
+from persistent_avito_parser import parse_avito_fast, get_persistent_browser
+import threading
 
 # Импортируем парсер Avito
 try:
@@ -250,79 +253,71 @@ class RealtyParserAPI:
         return results
 
     async def _parse_avito_light(self, url: str) -> Optional[PropertyData]:
-        """Легкий парсер Avito - извлекает данные только из заголовка страницы"""
-        driver = None
+        """Легкий парсер Avito через persistent браузер"""
         try:
-            print(f"🔍 Легкий парсинг Avito: {url}")
+            print(f"🔍 Легкий парсинг Avito (persistent): {url}")
 
-            # Настройки Chrome
-            options = Options()
-            options.add_argument("--headless=new")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--disable-extensions")
-            options.add_argument("--window-size=1920,1080")
+            # Используем persistent браузер
+            data = parse_avito_fast(url)
 
-            # Путь к Chrome binary
-            if os.path.exists("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"):
-                options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-            else:
-                options.binary_location = "/opt/google/chrome/google-chrome"
+            if data:
+                # Извлекаем данные
+                title = data.get('title', '')
+                h1 = data.get('h1', '')
+                price_text = data.get('price', '')
 
-            # Создаем драйвер
-            driver = webdriver.Chrome(options=options)
-            driver.set_page_load_timeout(30)
+                # Парсим данные из заголовка
+                text = h1 if h1 else title
+                parsed_data = self._extract_data_from_title(title, h1)
 
-            # Загружаем страницу
-            driver.get(url)
+                # Добавляем данные, полученные напрямую из парсера
+                if 'rooms' in data:
+                    parsed_data['rooms'] = data['rooms']
+                if 'total_area' in data:
+                    parsed_data['total_area'] = data['total_area']
+                if 'floor' in data:
+                    parsed_data['floor'] = data['floor']
+                if 'total_floors' in data:
+                    parsed_data['total_floors'] = data['total_floors']
 
-            # Получаем заголовок и H1
-            title = driver.title
-            print(f"📄 Заголовок: {title}")
+                # Парсим цену
+                price = None
+                if price_text:
+                    price_match = re.search(r'(\d[\d\s]*)', price_text.replace('\u00a0', ' '))
+                    if price_match:
+                        price_str = price_match.group(1).replace(' ', '')
+                        try:
+                            price = float(price_str)
+                        except:
+                            pass
 
-            try:
-                h1_element = driver.find_element("tag name", "h1")
-                h1_text = h1_element.text.strip()
-                print(f"📝 H1: {h1_text}")
-            except:
-                h1_text = ""
+                if parsed_data:
+                    # Определяем статус: активно если есть информация о комнатах
+                    has_rooms = parsed_data.get('rooms') is not None
+                    status = has_rooms
 
-            # Парсим данные из заголовка и H1
-            parsed_data = self._extract_data_from_title(title, h1_text)
+                    print(f"📊 Статус объявления: {'активно' if status else 'неактивно'} (комнаты: {parsed_data.get('rooms')})")
 
-            if parsed_data:
-                # Определяем статус: активно если есть информация о комнатах (включая 0 для студий/апартаментов)
-                has_rooms = parsed_data.get('rooms') is not None
-                status = has_rooms
+                    # Создаем объект PropertyData
+                    property_data = PropertyData(
+                        rooms=parsed_data.get('rooms'),
+                        price=price,
+                        total_area=parsed_data.get('total_area'),
+                        floor=parsed_data.get('floor'),
+                        total_floors=parsed_data.get('total_floors'),
+                        source='avito',
+                        url=url,
+                        status=status
+                    )
 
-                print(f"📊 Статус объявления: {'активно' if status else 'неактивно'} (комнаты: {parsed_data.get('rooms')})")
+                    print("✅ Легкий парсинг (persistent) успешен")
+                    return property_data
 
-                # Создаем объект PropertyData
-                property_data = PropertyData(
-                    rooms=parsed_data.get('rooms'),
-                    total_area=parsed_data.get('total_area'),
-                    floor=parsed_data.get('floor'),
-                    total_floors=parsed_data.get('total_floors'),
-                    source='avito',
-                    url=url,
-                    status=status
-                )
-
-                print("✅ Легкий парсинг успешен")
-                return property_data
-            else:
-                return None
+            return None
 
         except Exception as e:
-            print(f"❌ Ошибка легкого парсинга: {e}")
+            print(f"❌ Ошибка легкого парсинга (persistent): {e}")
             return None
-        finally:
-            if driver:
-                try:
-                    driver.quit()
-                except:
-                    pass
 
     def _extract_data_from_title(self, title: str, h1: str) -> Optional[Dict[str, Any]]:
         """Извлекает данные из заголовка и H1 Avito"""
@@ -775,6 +770,24 @@ class RealtyParserAPI:
 # Создаем экземпляр парсера
 parser = RealtyParserAPI()
 
+# Функция для инициализации persistent браузера в фоне
+def init_persistent_browser():
+    """Инициализирует persistent браузер в фоновом потоке"""
+    try:
+        print("🔄 Инициализация persistent браузера...")
+        browser = get_persistent_browser()
+        if browser.setup_browser():
+            print("✅ Persistent браузер запущен и готов к работе")
+            print("🏠 Браузер находится на Avito с активными cookies")
+        else:
+            print("❌ Не удалось запустить persistent браузер")
+    except Exception as e:
+        print(f"❌ Ошибка инициализации persistent браузера: {e}")
+
+# Запускаем инициализацию браузера в фоновом потоке
+browser_thread = threading.Thread(target=init_persistent_browser, daemon=True)
+browser_thread.start()
+
 # Создаем FastAPI приложение
 app = FastAPI(
     title="Realty Parser HTTP API",
@@ -865,13 +878,89 @@ async def parse_extended_property(url: str):
 @app.get("/api/health")
 async def health_check():
     """Проверка состояния API"""
+    # Проверяем статус persistent браузера
+    browser_status = "unknown"
+    try:
+        browser = get_persistent_browser()
+        session_info = browser.get_session_info()
+        browser_status = session_info.get('status', 'unknown')
+    except:
+        browser_status = "error"
+
     return {
         "status": "healthy",
         "service": "realty-parser-api",
         "avito_available": AVITO_AVAILABLE,
         "cian_available": True,
-        "yandex_available": YANDEX_AVAILABLE
+        "yandex_available": YANDEX_AVAILABLE,
+        "persistent_browser": browser_status
     }
+
+@app.get("/api/browser/status")
+async def browser_status():
+    """Проверка статуса persistent браузера"""
+    try:
+        browser = get_persistent_browser()
+        session_info = browser.get_session_info()
+        return {
+            "success": True,
+            "browser_session": session_info,
+            "message": "Статус браузера получен"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Ошибка получения статуса браузера"
+        }
+
+@app.post("/api/browser/init")
+async def init_browser():
+    """Принудительная инициализация persistent браузера"""
+    try:
+        browser = get_persistent_browser()
+        if browser.setup_browser():
+            session_info = browser.get_session_info()
+            return {
+                "success": True,
+                "browser_session": session_info,
+                "message": "Браузер успешно инициализирован"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Не удалось инициализировать браузер"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Ошибка инициализации браузера"
+        }
+
+@app.post("/api/browser/refresh")
+async def refresh_browser():
+    """Обновление сессии persistent браузера"""
+    try:
+        browser = get_persistent_browser()
+        if browser.refresh_session():
+            session_info = browser.get_session_info()
+            return {
+                "success": True,
+                "browser_session": session_info,
+                "message": "Сессия браузера обновлена"
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Не удалось обновить сессию браузера"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Ошибка обновления сессии браузера"
+        }
 
 @app.get("/api/sources")
 async def get_supported_sources():
@@ -885,19 +974,378 @@ async def get_supported_sources():
                 "source_id": "avito"
             },
             {
-                "name": "Cian", 
+                "name": "Cian",
                 "domain": "cian.ru",
                 "available": True,
                 "source_id": "cian"
             },
             {
-                "name": "Yandex Realty", 
+                "name": "Yandex Realty",
                 "domain": "realty.yandex.ru",
                 "available": YANDEX_AVAILABLE,
                 "source_id": "yandex"
             }
         ]
     }
+
+@app.get("/api/docs")
+async def api_documentation():
+    """Документация API"""
+    return {
+        "title": "Realty Parser HTTP API",
+        "version": "1.0.0",
+        "description": "API для парсинга объявлений недвижимости с Avito, Cian и Yandex Realty",
+        "base_url": "http://localhost:8008",
+        "endpoints": {
+            "monitoring": {
+                "GET /api/health": {
+                    "description": "Проверка состояния API и persistent браузера",
+                    "response": {
+                        "status": "healthy",
+                        "service": "realty-parser-api",
+                        "avito_available": True,
+                        "cian_available": True,
+                        "yandex_available": True,
+                        "persistent_browser": "active"
+                    }
+                },
+                "GET /api/sources": {
+                    "description": "Список поддерживаемых источников",
+                    "response": {
+                        "sources": [
+                            {"name": "Avito", "domain": "avito.ru", "available": True}
+                        ]
+                    }
+                }
+            },
+            "parsing": {
+                "GET /api/parse/single": {
+                    "description": "Быстрый парсинг одного объявления (из заголовка)",
+                    "parameters": {
+                        "url": "URL объявления (обязательный)"
+                    },
+                    "example": "/api/parse/single?url=https://www.avito.ru/moskva/kvartiry/1-k._kvartira_295_m_25_et._7627589190",
+                    "response": {
+                        "success": True,
+                        "data": {
+                            "rooms": 1,
+                            "total_area": 29.5,
+                            "floor": "3",
+                            "total_floors": 5,
+                            "price": 9000000,
+                            "source": "avito",
+                            "status": True
+                        },
+                        "message": "Объявление успешно спарсено (быстрый режим)"
+                    }
+                },
+                "GET /api/parse/extended": {
+                    "description": "Расширенный парсинг с полными данными",
+                    "parameters": {
+                        "url": "URL объявления (обязательный)"
+                    },
+                    "example": "/api/parse/extended?url=https://www.avito.ru/moskva/kvartiry/1-k._kvartira_295_m_25_et._7627589190",
+                    "response": {
+                        "success": True,
+                        "data": {
+                            "rooms": 1,
+                            "price": 9000000,
+                            "total_area": 29.5,
+                            "address": "Москва, 3-я Рыбинская ул., 30",
+                            "metro_station": "Митьково",
+                            "description": "...",
+                            "source": "avito"
+                        },
+                        "message": "Объявление успешно спарсено (расширенный режим)"
+                    }
+                },
+                "POST /api/parse/urls": {
+                    "description": "Пакетный парсинг списка URL",
+                    "body": {
+                        "urls": ["url1", "url2", "..."]
+                    },
+                    "response": {
+                        "success": True,
+                        "data": ["array of PropertyData objects"],
+                        "total": 2,
+                        "message": "Успешно спарсено 2 из 2 объявлений"
+                    }
+                },
+                "POST /api/parse/text": {
+                    "description": "Парсинг URL из текста",
+                    "body": {
+                        "text": "Текст с URL объявлений"
+                    },
+                    "response": {
+                        "success": True,
+                        "data": ["array of PropertyData objects"],
+                        "total": 1,
+                        "message": "Извлечено 1 URL, успешно спарсено 1 объявлений"
+                    }
+                }
+            },
+            "browser_management": {
+                "GET /api/browser/status": {
+                    "description": "Подробный статус persistent браузера",
+                    "response": {
+                        "success": True,
+                        "browser_session": {
+                            "status": "active",
+                            "url": "https://www.avito.ru/",
+                            "title": "Авито",
+                            "session_age_minutes": 15.5,
+                            "is_on_avito": True
+                        },
+                        "message": "Статус браузера получен"
+                    }
+                },
+                "POST /api/browser/init": {
+                    "description": "Принудительная инициализация браузера",
+                    "response": {
+                        "success": True,
+                        "browser_session": {"status": "active"},
+                        "message": "Браузер успешно инициализирован"
+                    }
+                },
+                "POST /api/browser/refresh": {
+                    "description": "Обновление сессии браузера",
+                    "response": {
+                        "success": True,
+                        "browser_session": {"status": "active"},
+                        "message": "Сессия браузера обновлена"
+                    }
+                }
+            }
+        },
+        "data_structure": {
+            "PropertyData": {
+                "description": "Структура данных объявления",
+                "fields": {
+                    "rooms": "Количество комнат (int, 0 для студий)",
+                    "price": "Цена в рублях (float)",
+                    "total_area": "Общая площадь в м² (float)",
+                    "living_area": "Жилая площадь в м² (float)",
+                    "kitchen_area": "Площадь кухни в м² (float)",
+                    "floor": "Этаж (string)",
+                    "total_floors": "Этажей в доме (int)",
+                    "bathroom": "Тип санузла (string)",
+                    "balcony": "Балкон/лоджия (string)",
+                    "renovation": "Тип ремонта (string)",
+                    "construction_year": "Год постройки (int)",
+                    "house_type": "Тип дома (string)",
+                    "ceiling_height": "Высота потолков в м (float)",
+                    "furniture": "Мебель (string)",
+                    "address": "Адрес (string)",
+                    "metro_station": "Ближайшая станция метро (string)",
+                    "metro_time": "Время до метро в минутах (int)",
+                    "metro_way": "Способ добраться до метро (string)",
+                    "tags": "Метки объявления (array of strings)",
+                    "description": "Описание (string)",
+                    "photo_urls": "Ссылки на фото (array of strings)",
+                    "source": "Источник: avito/cian/yandex (string)",
+                    "url": "URL объявления (string)",
+                    "status": "Активность объявления (boolean)",
+                    "views_today": "Просмотров сегодня (int)"
+                }
+            }
+        },
+        "features": {
+            "fast_parsing": "Быстрый парсинг из заголовка (3-5 сек)",
+            "persistent_browser": "Постоянный браузер с cookies для обхода блокировок",
+            "multiple_sources": "Поддержка Avito, Cian, Yandex Realty",
+            "batch_processing": "Пакетная обработка множества URL",
+            "auto_extraction": "Автоматическое извлечение URL из текста"
+        },
+        "performance": {
+            "fast_mode": "3-5 секунд (только заголовок)",
+            "extended_mode": "10-30 секунд (полные данные)",
+            "memory_usage": "~435 MB (persistent браузер)",
+            "concurrent_requests": "Поддерживается"
+        }
+    }
+
+@app.get("/", response_class=HTMLResponse)
+async def api_docs_html():
+    """HTML документация API"""
+    return """
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Realty Parser API - Документация</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 1200px; margin: 0 auto; padding: 20px; }
+            h1, h2, h3 { color: #2c3e50; }
+            .endpoint { background: #f8f9fa; border-left: 4px solid #007bff; padding: 15px; margin: 10px 0; border-radius: 5px; }
+            .method { display: inline-block; padding: 4px 8px; border-radius: 3px; font-weight: bold; color: white; font-size: 12px; }
+            .get { background: #28a745; }
+            .post { background: #007bff; }
+            code { background: #f1f1f1; padding: 2px 4px; border-radius: 3px; font-family: 'Monaco', 'Consolas', monospace; }
+            .example { background: #e9ecef; padding: 10px; border-radius: 5px; overflow-x: auto; }
+            .status { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; }
+            .active { background: #d4edda; color: #155724; }
+            .fast { background: #fff3cd; color: #856404; }
+            .extended { background: #f8d7da; color: #721c24; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; text-align: center; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0; }
+            .card { background: white; border: 1px solid #e1e5e9; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .badge { display: inline-block; padding: 3px 8px; background: #e9ecef; border-radius: 12px; font-size: 12px; margin: 2px; }
+            .success { color: #28a745; }
+            .warning { color: #ffc107; }
+            .error { color: #dc3545; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🏠 Realty Parser API</h1>
+            <p>HTTP API для парсинга объявлений недвижимости</p>
+            <p><strong>Поддерживает:</strong> Avito, Cian, Yandex Realty</p>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>🚀 Быстрый старт</h3>
+                <div class="example">
+                    <strong>Проверка статуса:</strong><br>
+                    <code>GET /api/health</code><br><br>
+                    <strong>Быстрый парсинг:</strong><br>
+                    <code>GET /api/parse/single?url=https://www.avito.ru/...</code><br><br>
+                    <strong>Статус браузера:</strong><br>
+                    <code>GET /api/browser/status</code>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>📊 Производительность</h3>
+                <span class="badge fast">Быстрый режим: 3-5 сек</span><br>
+                <span class="badge extended">Расширенный: 10-30 сек</span><br>
+                <span class="badge">Память: ~435 MB</span><br>
+                <span class="badge active">Persistent браузер</span>
+            </div>
+        </div>
+
+        <h2>📡 Endpoints</h2>
+
+        <h3>🔍 Мониторинг</h3>
+        <div class="endpoint">
+            <span class="method get">GET</span> <code>/api/health</code>
+            <p>Проверка состояния API и persistent браузера</p>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span> <code>/api/sources</code>
+            <p>Список поддерживаемых источников</p>
+        </div>
+
+        <h3>🏠 Парсинг объявлений</h3>
+        <div class="endpoint">
+            <span class="method get">GET</span> <code>/api/parse/single?url={URL}</code>
+            <p><strong>Быстрый парсинг</strong> - извлекает основные данные из заголовка (3-5 сек)</p>
+            <div class="example">
+                <strong>Возвращает:</strong> комнаты, площадь, этаж, цену (для Avito)
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span> <code>/api/parse/extended?url={URL}</code>
+            <p><strong>Расширенный парсинг</strong> - полные данные со страницы (10-30 сек)</p>
+            <div class="example">
+                <strong>Возвращает:</strong> все поля + адрес, метро, описание, фото
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span> <code>/api/parse/urls</code>
+            <p><strong>Пакетный парсинг</strong> списка URL</p>
+            <div class="example">
+                <strong>Body:</strong> <code>{"urls": ["url1", "url2", ...]}</code>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span> <code>/api/parse/text</code>
+            <p><strong>Парсинг из текста</strong> - автоматически извлекает URL</p>
+            <div class="example">
+                <strong>Body:</strong> <code>{"text": "Текст с URL объявлений"}</code>
+            </div>
+        </div>
+
+        <h3>🔧 Управление браузером</h3>
+        <div class="endpoint">
+            <span class="method get">GET</span> <code>/api/browser/status</code>
+            <p>Подробный статус persistent браузера</p>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span> <code>/api/browser/init</code>
+            <p>Принудительная инициализация браузера</p>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span> <code>/api/browser/refresh</code>
+            <p>Обновление сессии браузера</p>
+        </div>
+
+        <h2>📋 Структура данных</h2>
+        <div class="card">
+            <h3>PropertyData</h3>
+            <div class="grid">
+                <div>
+                    <strong>Основные поля:</strong><br>
+                    <span class="badge">rooms</span> - количество комнат<br>
+                    <span class="badge">price</span> - цена в рублях<br>
+                    <span class="badge">total_area</span> - общая площадь<br>
+                    <span class="badge">floor</span> - этаж<br>
+                    <span class="badge">source</span> - avito/cian/yandex<br>
+                    <span class="badge">status</span> - активность объявления
+                </div>
+                <div>
+                    <strong>Дополнительные:</strong><br>
+                    <span class="badge">address</span> - адрес<br>
+                    <span class="badge">metro_station</span> - метро<br>
+                    <span class="badge">description</span> - описание<br>
+                    <span class="badge">photo_urls</span> - фотографии<br>
+                    <span class="badge">renovation</span> - ремонт<br>
+                    <span class="badge">house_type</span> - тип дома
+                </div>
+            </div>
+        </div>
+
+        <h2>🌟 Особенности</h2>
+        <div class="grid">
+            <div class="card">
+                <h3>⚡ Быстрый парсинг</h3>
+                <p>Извлечение данных из заголовка страницы за 3-5 секунд</p>
+            </div>
+            <div class="card">
+                <h3>🍪 Persistent браузер</h3>
+                <p>Постоянный браузер с cookies для обхода блокировок</p>
+            </div>
+            <div class="card">
+                <h3>🔄 Автообновление</h3>
+                <p>Автоматическое обновление сессии и возврат на Avito</p>
+            </div>
+            <div class="card">
+                <h3>📦 Пакетная обработка</h3>
+                <p>Обработка множества URL одним запросом</p>
+            </div>
+        </div>
+
+        <h2>🔗 Полезные ссылки</h2>
+        <div class="example">
+            📊 <a href="/api/health">Статус API</a><br>
+            🔍 <a href="/api/browser/status">Статус браузера</a><br>
+            📚 <a href="/api/docs">JSON документация</a><br>
+            🎯 <a href="/api/sources">Поддерживаемые источники</a>
+        </div>
+
+        <footer style="margin-top: 50px; text-align: center; color: #6c757d; border-top: 1px solid #e1e5e9; padding-top: 20px;">
+            <p>Realty Parser API v1.0.0 | Поддержка: Avito, Cian, Yandex Realty</p>
+        </footer>
+    </body>
+    </html>
+    """
 
 # Функции для быстрого доступа (для использования в других Python модулях)
 async def parse_property(url: str) -> Optional[PropertyData]:
@@ -920,10 +1368,19 @@ def extract_urls(raw_input: str) -> List[str]:
 realty_parser = RealtyParserAPI()
 
 if __name__ == "__main__":
+    print("🚀 Запуск Realty Parser Server")
+    print("=" * 60)
+    print("🌐 HTTP API: http://localhost:8008")
+    print("📚 Документация: http://localhost:8008/")
+    print("📊 Статус API: http://localhost:8008/api/health")
+    print("🔍 Статус браузера: http://localhost:8008/api/browser/status")
+    print("🔄 Persistent браузер инициализируется в фоне...")
+    print("=" * 60)
+
     # Запуск HTTP сервера
     uvicorn.run(
-        app, 
-        host="0.0.0.0", 
+        app,
+        host="0.0.0.0",
         port=8008,
         log_level="info"
     )
