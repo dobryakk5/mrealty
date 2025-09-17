@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -62,8 +63,8 @@ class AvitoCardParser:
             options.add_argument("--disable-extensions")
             options.add_argument("--disable-plugins")
             
-            # Headless режим для быстрой работы
-            options.add_argument("--headless")
+            # Headless режим для быстрой работы (новый headless)
+            options.add_argument("--headless=new")
             
             # User-Agent
             options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -77,7 +78,10 @@ class AvitoCardParser:
             options.add_argument("--disable-blink-features=AutomationControlled")
             options.add_experimental_option("excludeSwitches", ["enable-automation"])
             options.add_experimental_option('useAutomationExtension', False)
-            
+
+            # Явно указываем путь к Chrome binary
+            options.binary_location = "/opt/google/chrome/google-chrome"
+
             print("🔧 Создаем браузер...")
             self.driver = webdriver.Chrome(options=options)
             

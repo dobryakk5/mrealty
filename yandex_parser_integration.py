@@ -13,6 +13,7 @@ import time
 import re
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -31,7 +32,7 @@ class YandexCardParser:
         """Настраивает Chrome WebDriver"""
         try:
             chrome_options = Options()
-            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--headless=new')
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--disable-gpu')
@@ -44,8 +45,8 @@ class YandexCardParser:
             prefs = {"profile.managed_default_content_settings.images": 2}
             chrome_options.add_experimental_option("prefs", prefs)
             
-            if os.path.exists("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"):
-                chrome_options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            # Явно указываем путь к Chrome binary
+            chrome_options.binary_location = "/opt/google/chrome/google-chrome"
             
             print("🔧 Создаем браузер...")
             self.driver = webdriver.Chrome(options=chrome_options)
