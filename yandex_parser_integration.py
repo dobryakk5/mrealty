@@ -83,6 +83,74 @@ class YandexCardParser:
         """Парсит полную страницу объявления Yandex Realty"""
         return self.parse_yandex_page(url)
 
+    def extract_quick_data(self, html):
+        """Быстро извлекает только цену и статус из HTML"""
+        soup = BeautifulSoup(html, 'html.parser')
+        result = {}
+
+        # Цена
+        try:
+            price_selectors = ['.OfferCardSummaryInfo__price--2FD3C', '[data-test-id="price-value"]', '.price__value']
+            for selector in price_selectors:
+                price_el = soup.select_one(selector)
+                if price_el:
+                    price_text = self._clean(price_el.get_text())
+                    if price_text:
+                        price_clean = price_text.replace('&nbsp;', ' ').replace('\xa0', ' ')
+                        price_digits = re.sub(r'[^\d]', '', price_clean)
+                        if price_digits and len(price_digits) >= 6 and len(price_digits) <= 12:
+                            candidate_price = int(price_digits)
+                            if 100000 <= candidate_price <= 1000000000:
+                                result['price'] = candidate_price
+                                break
+        except Exception:
+            pass
+
+        # Статус - упрощенная версия
+        try:
+            result['status'] = 'active'  # По умолчанию активно
+
+            # 1. Проверяем метки под ценой
+            price_tag_selectors = [
+                '.OfferCardSummary__tags--QypeB',
+                '.OfferCardSummaryInfo__tags',
+                '[class*="tags"]',
+                '[class*="Tag"]'
+            ]
+
+            for selector in price_tag_selectors:
+                status_elements = soup.select(selector)
+                for element in status_elements:
+                    status_text = self._clean(element.get_text().lower())
+                    if status_text and any(marker in status_text for marker in ['снято', 'устарело', 'неактуально']):
+                        result['status'] = 'inactive'
+                        break
+                if result['status'] == 'inactive':
+                    break
+
+            # 2. Проверяем заголовок страницы
+            if result['status'] == 'active':
+                title_tag = soup.find('title')
+                if title_tag:
+                    title_text = title_tag.get_text().lower()
+                    if any(word in title_text for word in ['снято', 'устарело', 'недоступно']):
+                        result['status'] = 'inactive'
+
+            # 3. Быстрая проверка структуры - если нет фото, вероятно неактивно
+            if result['status'] == 'active':
+                page_html = str(soup)
+                has_photos = any(indicator in page_html for indicator in [
+                    'data-test-id="photo-thumbnail"',
+                    'data-test-id="gallery"'
+                ])
+                if not has_photos and 'похожие объявления' in page_html.lower():
+                    result['status'] = 'inactive'
+
+        except Exception:
+            result['status'] = 'active'
+
+        return result
+
     def extract_all_data(self, html):
         """Извлекает все данные из HTML"""
         soup = BeautifulSoup(html, 'html.parser')
@@ -329,15 +397,55 @@ class YandexCardParser:
 
         # Статус
         try:
-            status_elements = soup.select('.OfferCardSummary__tags--QypeB')
-            for element in status_elements:
-                status_text = self._clean(element.get_text().lower())
-                if status_text and any(marker in status_text for marker in ['снято', 'устарело']):
-                    result['status'] = 'inactive'
+            result['status'] = 'active'  # По умолчанию активно
+
+            # 1. Проверяем метки под ценой (различные селекторы)
+            price_tag_selectors = [
+                '.OfferCardSummary__tags--QypeB',  # Основной селектор
+                '.OfferCardSummaryInfo__tags',      # Альтернативный
+                '.OfferCard__tags',                 # Еще один вариант
+                '[class*="tags"]',                  # Любые теги
+                '[class*="Tag"]'                    # Компоненты тегов
+            ]
+
+            for selector in price_tag_selectors:
+                status_elements = soup.select(selector)
+                for element in status_elements:
+                    status_text = self._clean(element.get_text().lower())
+                    if status_text and any(marker in status_text for marker in ['снято', 'устарело', 'неактуально']):
+                        result['status'] = 'inactive'
+                        break
+                if result['status'] == 'inactive':
                     break
-            else:
-                result['status'] = 'active'
-        except Exception:
+
+            # 2. Если статус не определен по меткам, проверяем структуру страницы
+            if result['status'] == 'active':
+                page_html = str(soup)
+
+                # Проверяем, есть ли фото галерея - если нет, то объявление неактивно
+                photo_indicators = [
+                    'data-test-id="photo-thumbnail"',
+                    'data-test-id="gallery"',
+                    'class="Gallery"',
+                    'фото квартиры',
+                    'фотография'
+                ]
+
+                has_photos = any(indicator in page_html for indicator in photo_indicators)
+
+                # Если нет фото И есть "Похожие объявления" в начале - объявление неактивно
+                if not has_photos and 'похожие объявления' in page_html.lower():
+                    result['status'] = 'inactive'
+
+                # Дополнительно: проверяем заголовок страницы
+                title_tag = soup.find('title')
+                if title_tag:
+                    title_text = title_tag.get_text().lower()
+                    if any(word in title_text for word in ['снято', 'устарело', 'недоступно']):
+                        result['status'] = 'inactive'
+
+
+        except Exception as e:
             result['status'] = 'active'
 
         # Просмотры
@@ -391,6 +499,37 @@ class YandexCardParser:
 
         return result
 
+    def parse_yandex_quick(self, url):
+        """Быстрый парсинг только цены и статуса Yandex Realty"""
+        try:
+            print(f"⚡ Быстрый парсинг Yandex Realty: {url}")
+
+            if not self.setup_selenium():
+                print("❌ Не удалось настроить Selenium")
+                return None
+
+            print(f"🌐 Переходим на страницу: {url}")
+            self.driver.get(url)
+
+            # Минимальное ожидание
+            time.sleep(1.5)
+
+            html = self.driver.page_source
+            print("📄 Получен HTML страницы")
+
+            print("⚡ Быстро извлекаем цену и статус...")
+            result = self.extract_quick_data(html)
+            result['url'] = url
+
+            print("✅ Быстрый парсинг завершен!")
+            return result
+
+        except Exception as e:
+            print(f"❌ Ошибка быстрого парсинга: {e}")
+            return None
+        finally:
+            self.cleanup()
+
     def parse_yandex_page(self, url):
         """Парсит полную страницу объявления Yandex Realty"""
         try:
@@ -442,6 +581,20 @@ class YandexCardParser:
                 self.driver = None
         except Exception:
             pass
+
+    def prepare_quick_data_for_db(self, parsed_data):
+        """Подготавливает быстрые данные (цена + статус) для БД"""
+        if not parsed_data:
+            return None
+
+        db_data = {
+            'url': parsed_data.get('url'),
+            'price': parsed_data.get('price'),
+            'status': parsed_data.get('status'),
+            'source': 'yandex'
+        }
+
+        return db_data
 
     def prepare_data_for_db(self, parsed_data):
         """Подготавливает данные для БД в формате, совместимом с listings_processor"""

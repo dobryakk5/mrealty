@@ -197,7 +197,7 @@ class RealtyParserAPI:
     
     async def parse_property(self, url: str, skip_photos: bool = True) -> Optional[PropertyData]:
         """
-        Универсальный метод для парсинга объявлений
+        Универсальный метод для парсинга объявлений (быстрый режим)
         Возвращает структурированные данные PropertyData
         """
         try:
@@ -206,7 +206,7 @@ class RealtyParserAPI:
             elif self.is_cian_url(url):
                 return await self._parse_cian_property(url)
             elif self.is_yandex_url(url):
-                return await self._parse_yandex_property(url)
+                return await self._parse_yandex_property_quick(url)
             else:
                 print(f"⚠️ Неизвестный источник ссылки: {url}")
                 return None
@@ -438,37 +438,83 @@ class RealtyParserAPI:
                 except:
                     pass
     
-    async def _parse_yandex_property(self, url: str) -> Optional[PropertyData]:
-        """Парсит объявление с Yandex Realty"""
+    async def _parse_yandex_property_quick(self, url: str) -> Optional[PropertyData]:
+        """Быстро парсит цену и статус объявления с Yandex Realty"""
         if not YANDEX_AVAILABLE:
             print("❌ Парсер Yandex недоступен")
             return None
-        
+
         try:
-            print(f"🏠 Парсим объявление Yandex Realty: {url}")
-            
+            print(f"⚡ Быстрый парсинг Yandex Realty: {url}")
+
             # Создаем парсер Yandex
             parser = YandexCardParser()
-            
+
+            # Быстрый парсинг только цены и статуса
+            parsed_data = parser.parse_yandex_quick(url)
+            if not parsed_data:
+                print("❌ Не удалось быстро спарсить данные объявления Yandex Realty")
+                return None
+
+            # Преобразуем быстрые данные в формат для БД
+            db_data = parser.prepare_quick_data_for_db(parsed_data)
+            if not db_data:
+                print("❌ Не удалось подготовить быстрые данные для БД")
+                return None
+
+            # Определяем статус для Yandex
+            yandex_status = self._determine_status(db_data.get('status'))
+            price = db_data.get('price')
+
+            # Создаем структурированный объект только с ценой и статусом
+            property_data = PropertyData(
+                price=price,
+                source='yandex',
+                url=url,
+                status=yandex_status
+            )
+
+            print(f"✅ Быстрый парсинг Yandex Realty завершен")
+            return property_data
+
+        except Exception as e:
+            print(f"❌ Ошибка быстрого парсинга объявления Yandex Realty: {e}")
+            return None
+        finally:
+            # Закрываем браузер
+            if 'parser' in locals():
+                try:
+                    parser.cleanup()
+                except:
+                    pass
+
+    async def _parse_yandex_property(self, url: str) -> Optional[PropertyData]:
+        """Парсит объявление с Yandex Realty (полные данные)"""
+        if not YANDEX_AVAILABLE:
+            print("❌ Парсер Yandex недоступен")
+            return None
+
+        try:
+            print(f"🏠 Парсим объявление Yandex Realty: {url}")
+
+            # Создаем парсер Yandex
+            parser = YandexCardParser()
+
             # Парсим полную страницу объявления
             parsed_data = parser.parse_yandex_page(url)
             if not parsed_data:
                 print("❌ Не удалось спарсить данные объявления Yandex Realty")
                 return None
-            
+
             # Преобразуем данные в формат для БД
             db_data = parser.prepare_data_for_db(parsed_data)
             if not db_data:
                 print("❌ Не удалось подготовить данные для БД")
                 return None
-            
+
             # Определяем статус для Yandex
             yandex_status = self._determine_status(db_data.get('status'))
-
-            # Дополнительная проверка: если нет цены, то объявление неактивно
             price = db_data.get('price')
-            if not price or price == 0:
-                yandex_status = False
 
             # Создаем структурированный объект
             property_data = PropertyData(
@@ -493,10 +539,10 @@ class RealtyParserAPI:
                 status=yandex_status,
                 views_today=db_data.get('views')  # Yandex views are today's views, not total
             )
-            
+
             print(f"✅ Объявление Yandex Realty успешно спарсено")
             return property_data
-            
+
         except Exception as e:
             print(f"❌ Ошибка парсинга объявления Yandex Realty: {e}")
             return None
