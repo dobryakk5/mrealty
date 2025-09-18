@@ -146,7 +146,7 @@ class RealtyParserAPI:
     
     def is_yandex_url(self, url: str) -> bool:
         """Определяет, является ли ссылка ссылкой на Yandex Realty"""
-        return 'realty.yandex.ru' in url.lower()
+        return 'realty.yandex.ru' in url.lower() or 'realty.ya.ru' in url.lower()
     
     def _extract_station_from_metro_time(self, metro_time: str) -> Optional[str]:
         """Извлекает название станции из формата '6 Текстильщики'"""
