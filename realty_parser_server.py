@@ -189,8 +189,8 @@ class RealtyParserAPI:
         
         status_lower = status_str.lower().strip()
         inactive_statuses = [
-            'снято', 'неактивно', 'архив', 'удалено', 
-            'продано', 'сдано', 'неактуальное', 'заблокировано'
+            'снято', 'неактивно', 'архив', 'удалено',
+            'продано', 'сдано', 'неактуальное', 'заблокировано', 'устарело'
         ]
         
         return not any(inactive_status in status_lower for inactive_status in inactive_statuses)
@@ -462,10 +462,18 @@ class RealtyParserAPI:
                 print("❌ Не удалось подготовить данные для БД")
                 return None
             
+            # Определяем статус для Yandex
+            yandex_status = self._determine_status(db_data.get('status'))
+
+            # Дополнительная проверка: если нет цены, то объявление неактивно
+            price = db_data.get('price')
+            if not price or price == 0:
+                yandex_status = False
+
             # Создаем структурированный объект
             property_data = PropertyData(
                 rooms=db_data.get('rooms'),
-                price=db_data.get('price'),
+                price=price,
                 total_area=db_data.get('area_total'),
                 living_area=db_data.get('living_area'),
                 kitchen_area=db_data.get('kitchen_area'),
@@ -482,7 +490,7 @@ class RealtyParserAPI:
                 description=db_data.get('description'),
                 source='yandex',
                 url=url,
-                status=self._determine_status(db_data.get('status', 'active')),
+                status=yandex_status,
                 views_today=db_data.get('views')  # Yandex views are today's views, not total
             )
             
