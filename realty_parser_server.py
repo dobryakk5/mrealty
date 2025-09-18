@@ -186,13 +186,21 @@ class RealtyParserAPI:
         """Определяет активность объявления по строковому статусу"""
         if not status_str:
             return True  # По умолчанию считаем активным
-        
+
         status_lower = status_str.lower().strip()
+
+        # Прямая проверка для стандартных значений
+        if status_lower == 'inactive':
+            return False
+        if status_lower == 'active':
+            return True
+
+        # Проверка по ключевым словам
         inactive_statuses = [
             'снято', 'неактивно', 'архив', 'удалено',
-            'продано', 'сдано', 'неактуальное', 'заблокировано', 'устарело'
+            'продано', 'сдано', 'неактуальное', 'заблокировано', 'устарело', 'inactive'
         ]
-        
+
         return not any(inactive_status in status_lower for inactive_status in inactive_statuses)
     
     async def parse_property(self, url: str, skip_photos: bool = True) -> Optional[PropertyData]:
