@@ -90,7 +90,18 @@ class YandexCardParser:
 
         # Цена
         try:
-            price_selectors = ['.OfferCardSummaryInfo__price--2FD3C', '[data-test-id="price-value"]', '.price__value']
+            price_selectors = [
+                # Устойчивые селекторы (менее вероятно изменятся)
+                '[data-test-id="price-value"]',          # data-test-id обычно стабильны
+                'span[class*="price"][class*="Price"]',  # Комбинация классов с Price
+                'span[class*="SummaryInfo"][class*="price"]',  # SummaryInfo + price
+                # Текущие точные селекторы (могут измениться)
+                '.OfferCardSummaryInfo__price--2FD3C',
+                # Общие селекторы как fallback
+                'span[class*="price"]',                   # Любой спан с price в классе
+                '.price__value',                         # Общий селектор
+                'h1 + span'                              # Спан после h1 (цена обычно идет после заголовка)
+            ]
             for selector in price_selectors:
                 price_el = soup.select_one(selector)
                 if price_el:
@@ -110,23 +121,43 @@ class YandexCardParser:
         try:
             result['status'] = 'active'  # По умолчанию активно
 
-            # 1. Проверяем метки под ценой
-            price_tag_selectors = [
-                '.OfferCardSummary__tags--QypeB',
-                '.OfferCardSummaryInfo__tags',
-                '[class*="tags"]',
-                '[class*="Tag"]'
+            # 1. Проверяем красную метку "снято или устарело" рядом с ценой
+            status_tag_selectors = [
+                # Устойчивые селекторы (менее вероятно изменятся)
+                '[data-test="Badge"]',                                      # data-test стабилен
+                'div[class*="red"][class*="Badge"]',                        # Красный бейдж
+                'div[class*="Badge"][class*="view_red"]',                   # Бейдж с красным видом
+                '*[class*="badgeText"]',                                    # Любой текст бейджа
+                '*[class*="tags"] *[class*="Badge"]',                       # Бейдж в контейнере тегов
+                # Текущие точные селекторы (могут измениться)
+                '.OfferCardSummary__tags--QypeB .Badge__badgeText--GkeO3',  # Точный путь к тексту бейджа
+                '.Badge__view_red--oJExh .Badge__badgeText--GkeO3',         # Красный бейдж с текстом
+                '.Badge__badgeText--GkeO3',                                 # Любой текст бейджа
+                '.OfferCardSummary__tags--QypeB',                           # Контейнер тегов
+                # Общие селекторы как fallback
+                '[class*="Badge"]',
+                '[class*="badge"]',
+                '[class*="Tag"]',
+                '[class*="tag"]'
             ]
 
-            for selector in price_tag_selectors:
+            for selector in status_tag_selectors:
                 status_elements = soup.select(selector)
                 for element in status_elements:
                     status_text = self._clean(element.get_text().lower())
                     if status_text and any(marker in status_text for marker in ['снято', 'устарело', 'неактуально']):
                         result['status'] = 'inactive'
+                        print(f"🔴 Найдена метка статуса: '{status_text}' в селекторе: {selector}")
                         break
                 if result['status'] == 'inactive':
                     break
+
+            # Дополнительный поиск по тексту всей страницы
+            if result['status'] == 'active':
+                page_text = soup.get_text()
+                if 'объявление снято или устарело' in page_text.lower():
+                    result['status'] = 'inactive'
+                    print("🔴 Найден текст 'объявление снято или устарело' на странице")
 
             # 2. Проверяем заголовок страницы
             if result['status'] == 'active':
@@ -231,7 +262,18 @@ class YandexCardParser:
 
         # Цена
         try:
-            price_selectors = ['.OfferCardSummaryInfo__price--2FD3C', '[data-test-id="price-value"]', '.price__value']
+            price_selectors = [
+                # Устойчивые селекторы (менее вероятно изменятся)
+                '[data-test-id="price-value"]',          # data-test-id обычно стабильны
+                'span[class*="price"][class*="Price"]',  # Комбинация классов с Price
+                'span[class*="SummaryInfo"][class*="price"]',  # SummaryInfo + price
+                # Текущие точные селекторы (могут измениться)
+                '.OfferCardSummaryInfo__price--2FD3C',
+                # Общие селекторы как fallback
+                'span[class*="price"]',                   # Любой спан с price в классе
+                '.price__value',                         # Общий селектор
+                'h1 + span'                              # Спан после h1 (цена обычно идет после заголовка)
+            ]
             for selector in price_selectors:
                 price_el = soup.select_one(selector)
                 if price_el:
@@ -399,24 +441,43 @@ class YandexCardParser:
         try:
             result['status'] = 'active'  # По умолчанию активно
 
-            # 1. Проверяем метки под ценой (различные селекторы)
-            price_tag_selectors = [
-                '.OfferCardSummary__tags--QypeB',  # Основной селектор
-                '.OfferCardSummaryInfo__tags',      # Альтернативный
-                '.OfferCard__tags',                 # Еще один вариант
-                '[class*="tags"]',                  # Любые теги
-                '[class*="Tag"]'                    # Компоненты тегов
+            # 1. Проверяем красную метку "снято или устарело" рядом с ценой
+            status_tag_selectors = [
+                # Устойчивые селекторы (менее вероятно изменятся)
+                '[data-test="Badge"]',                                      # data-test стабилен
+                'div[class*="red"][class*="Badge"]',                        # Красный бейдж
+                'div[class*="Badge"][class*="view_red"]',                   # Бейдж с красным видом
+                '*[class*="badgeText"]',                                    # Любой текст бейджа
+                '*[class*="tags"] *[class*="Badge"]',                       # Бейдж в контейнере тегов
+                # Текущие точные селекторы (могут измениться)
+                '.OfferCardSummary__tags--QypeB .Badge__badgeText--GkeO3',  # Точный путь к тексту бейджа
+                '.Badge__view_red--oJExh .Badge__badgeText--GkeO3',         # Красный бейдж с текстом
+                '.Badge__badgeText--GkeO3',                                 # Любой текст бейджа
+                '.OfferCardSummary__tags--QypeB',                           # Контейнер тегов
+                # Общие селекторы как fallback
+                '[class*="Badge"]',
+                '[class*="badge"]',
+                '[class*="Tag"]',
+                '[class*="tag"]'
             ]
 
-            for selector in price_tag_selectors:
+            for selector in status_tag_selectors:
                 status_elements = soup.select(selector)
                 for element in status_elements:
                     status_text = self._clean(element.get_text().lower())
                     if status_text and any(marker in status_text for marker in ['снято', 'устарело', 'неактуально']):
                         result['status'] = 'inactive'
+                        print(f"🔴 Найдена метка статуса: '{status_text}' в селекторе: {selector}")
                         break
                 if result['status'] == 'inactive':
                     break
+
+            # Дополнительный поиск по тексту всей страницы
+            if result['status'] == 'active':
+                page_text = soup.get_text()
+                if 'объявление снято или устарело' in page_text.lower():
+                    result['status'] = 'inactive'
+                    print("🔴 Найден текст 'объявление снято или устарело' на странице")
 
             # 2. Если статус не определен по меткам, проверяем структуру страницы
             if result['status'] == 'active':
