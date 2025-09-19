@@ -12,8 +12,9 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 
 import requests
+import aiohttp
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -25,6 +26,10 @@ import os
 import threading
 import signal
 import atexit
+from dotenv import load_dotenv
+
+# Загружаем переменные из .env файла
+load_dotenv()
 
 # Импортируем парсер Avito
 try:
@@ -121,6 +126,11 @@ class BazaWinnerSearchRequest(BaseModel):
     username: str
     password: str
     search_params: Dict[str, Any] = {}
+
+class SendDocumentRequest(BaseModel):
+    user_id: str
+    file_name: Optional[str] = None
+    caption: Optional[str] = "📊 Сравнение квартир"
 
 class ParseResponse(BaseModel):
     success: bool
@@ -1321,6 +1331,61 @@ async def health_check():
         "yandex_available": YANDEX_AVAILABLE,
         "persistent_browser": browser_status
     }
+
+@app.post("/api/send-document")
+async def send_document(
+    user_id: str = Form(...),
+    caption: str = Form("📊 Сравнение квартир"),
+    document: UploadFile = File(...)
+):
+    """Отправка документа в Telegram"""
+    try:
+        # Читаем файл
+        file_content = await document.read()
+
+        # Проверяем наличие Bot Token в переменных окружения
+        bot_token = os.getenv('API_TOKEN')
+
+        if not bot_token:
+            # Если нет токена, просто возвращаем информацию о файле
+            return {
+                "success": True,
+                "message": f"Файл {document.filename} готов к отправке (токен бота не настроен)",
+                "user_id": user_id,
+                "file_name": document.filename,
+                "file_size": len(file_content),
+                "caption": caption,
+                "note": "Добавьте API_TOKEN в .env файл для отправки"
+            }
+
+        # Отправляем через Telegram Bot API
+        url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+
+        # Создаем form data для отправки
+        data = aiohttp.FormData()
+        data.add_field('chat_id', user_id)
+        data.add_field('caption', caption)
+        data.add_field('document', file_content, filename=document.filename)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=data) as response:
+                result = await response.json()
+
+                if response.status == 200 and result.get('ok'):
+                    return {
+                        "success": True,
+                        "message": f"Документ {document.filename} успешно отправлен пользователю {user_id}",
+                        "user_id": user_id,
+                        "file_name": document.filename,
+                        "file_size": len(file_content),
+                        "caption": caption,
+                        "telegram_response": result
+                    }
+                else:
+                    raise Exception(f"Telegram API error: {result}")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка отправки документа: {str(e)}")
 
 @app.get("/api/browser/status")
 async def browser_status():
