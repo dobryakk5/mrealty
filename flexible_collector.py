@@ -45,7 +45,7 @@ MAX_PRICE = None
 
 # Период публикации (дни)
 PUBLISHED_DAYS_AGO = 7
-is_first_published=True
+IS_FIRST_PUBLISHED = True
 
 # Пагинация
 PAGE_SIZE = 400
@@ -724,6 +724,7 @@ async def main():
     print(f"👤 Продавцы: {SELLER_TYPE}")
     print(f"📊 Статус сделок: {deal_status}")
     print(f"📅 Период: {days} дней")
+    print(f"🆕 Только новые объявления: {'ДА' if IS_FIRST_PUBLISHED else 'НЕТ'}")
     print("=" * 60)
 
     collector = FlexibleCollector()
@@ -745,7 +746,8 @@ async def main():
             deal_status=deal_status,          # Используем аргумент
             min_price=MIN_PRICE,              # Используем переменную
             max_price=MAX_PRICE,              # Используем переменную
-            published_days_ago=days           # Используем аргумент
+            published_days_ago=days,          # Используем аргумент
+            is_first_published=IS_FIRST_PUBLISHED  # Используем переменную
         )
         
         if result and 'advs' in result:
