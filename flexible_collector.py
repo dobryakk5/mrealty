@@ -735,11 +735,15 @@ async def main():
     # Переопределяем настройки из аргументов
     days = args.days
 
-    # Правильно обрабатываем rooms
-    if args.rooms == "all" or ROOMS == "all":
+    # Правильно обрабатываем rooms - АРГУМЕНТЫ В ПРИОРИТЕТЕ
+    if args.rooms == "all":
+        rooms = "all"
+    elif args.rooms != ROOMS:  # Если аргумент отличается от дефолта, используем аргумент
+        rooms = [int(r.strip()) for r in args.rooms.split(',') if r.strip().isdigit()]
+    elif ROOMS == "all":  # Иначе используем конфиг
         rooms = "all"
     else:
-        rooms = [int(r.strip()) for r in args.rooms.split(',') if r.strip().isdigit()]
+        rooms = [int(r.strip()) for r in ROOMS.split(',') if r.strip().isdigit()]
 
     deal_status = "inactive" if args.inactive else DEAL_STATUS
 
