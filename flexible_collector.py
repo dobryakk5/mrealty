@@ -433,25 +433,23 @@ class FlexibleCollector:
         # Применяем фильтры комнат
         if isinstance(rooms, list):
             payload = self.set_rooms_custom(payload, rooms)
-            # Автоматически определяем настройку студий на основе rooms
-            studios_needed = 0 in rooms
-            regular_rooms = [r for r in rooms if r > 0]
-
-            # Переопределяем studio параметр на основе rooms
-            if studios_needed and not regular_rooms:
-                studio = "studio_only"  # Только студии
-            elif regular_rooms and not studios_needed:
-                studio = "no_studio"    # Исключить студии
-            else:
-                studio = "all"          # Все типы
+            # Для списка комнат НЕ применяем дополнительные фильтры студий
+            # так как set_rooms_custom уже всё настроил правильно
+            studio_filters_applied = True
         elif rooms == "all":
             payload = self.set_rooms_all(payload)
+            studio_filters_applied = False
         elif rooms == "1k":
             payload = self.set_rooms_1k(payload)
+            studio_filters_applied = False
         elif rooms == "2k":
             payload = self.set_rooms_2k(payload)
+            studio_filters_applied = False
         elif rooms == "3k":
             payload = self.set_rooms_3k(payload)
+            studio_filters_applied = False
+        else:
+            studio_filters_applied = False
 
         # Применяем фильтры типа здания
         if building_type == "old_only":
@@ -461,13 +459,14 @@ class FlexibleCollector:
         elif building_type == "all":
             payload = self.set_building_all(payload)
 
-        # Применяем фильтры студий (теперь studio может быть переопределен выше)
-        if studio == "studio_only":
-            payload = self.set_studio_only(payload)
-        elif studio == "no_studio":
-            payload = self.set_no_studio(payload)
-        elif studio == "all":
-            payload = self.set_studio_all(payload)
+        # Применяем фильтры студий ТОЛЬКО если они не были применены в set_rooms_custom
+        if not studio_filters_applied:
+            if studio == "studio_only":
+                payload = self.set_studio_only(payload)
+            elif studio == "no_studio":
+                payload = self.set_no_studio(payload)
+            elif studio == "all":
+                payload = self.set_studio_all(payload)
 
         # Применяем фильтры типа продавца
         if seller_type == "owner_only":
