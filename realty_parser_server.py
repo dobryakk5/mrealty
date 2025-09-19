@@ -127,10 +127,11 @@ class BazaWinnerSearchRequest(BaseModel):
     password: str
     search_params: Dict[str, Any] = {}
 
-class SendDocumentRequest(BaseModel):
+class SendExcelDocumentRequest(BaseModel):
     user_id: str
-    file_name: Optional[str] = None
-    caption: Optional[str] = "📊 Сравнение квартир"
+    caption: str = "📊 Сравнение квартир"
+    filename: str = "сравнение-квартир.xlsx"
+    excel_data: List[Dict[str, Any]]
 
 class ParseResponse(BaseModel):
     success: bool
@@ -1332,40 +1333,64 @@ async def health_check():
         "persistent_browser": browser_status
     }
 
-@app.post("/api/send-document")
-async def send_document(
-    user_id: str = Form(...),
-    caption: str = Form("📊 Сравнение квартир"),
-    document: UploadFile = File(...)
-):
-    """Отправка документа в Telegram"""
+@app.post("/api/send-excel-document")
+async def send_excel_document(request: SendExcelDocumentRequest):
+    """Создание и отправка Excel документа в Telegram"""
     try:
-        # Читаем файл
-        file_content = await document.read()
+        import pandas as pd
+        import io
 
         # Проверяем наличие Bot Token в переменных окружения
         bot_token = os.getenv('API_TOKEN')
 
         if not bot_token:
-            # Если нет токена, просто возвращаем информацию о файле
             return {
-                "success": True,
-                "message": f"Файл {document.filename} готов к отправке (токен бота не настроен)",
-                "user_id": user_id,
-                "file_name": document.filename,
-                "file_size": len(file_content),
-                "caption": caption,
+                "success": False,
+                "message": "Токен бота не настроен",
+                "user_id": request.user_id,
+                "filename": request.filename,
                 "note": "Добавьте API_TOKEN в .env файл для отправки"
             }
+
+        # Проверяем данные
+        if not request.excel_data:
+            raise HTTPException(status_code=400, detail="Нет данных для создания Excel файла")
+
+        # Создаем DataFrame из данных
+        df = pd.DataFrame(request.excel_data)
+
+        # Создаем Excel файл в памяти
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Квартиры')
+
+            # Автоматически подгоняем ширину колонок
+            worksheet = writer.sheets['Квартиры']
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+
+        excel_buffer.seek(0)
+        file_content = excel_buffer.getvalue()
 
         # Отправляем через Telegram Bot API
         url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
 
         # Создаем form data для отправки
         data = aiohttp.FormData()
-        data.add_field('chat_id', user_id)
-        data.add_field('caption', caption)
-        data.add_field('document', file_content, filename=document.filename)
+        data.add_field('chat_id', request.user_id)
+        data.add_field('caption', request.caption)
+        data.add_field('document', file_content, filename=request.filename)
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, data=data) as response:
@@ -1374,18 +1399,19 @@ async def send_document(
                 if response.status == 200 and result.get('ok'):
                     return {
                         "success": True,
-                        "message": f"Документ {document.filename} успешно отправлен пользователю {user_id}",
-                        "user_id": user_id,
-                        "file_name": document.filename,
+                        "message": f"Excel файл {request.filename} успешно отправлен пользователю {request.user_id}",
+                        "user_id": request.user_id,
+                        "filename": request.filename,
                         "file_size": len(file_content),
-                        "caption": caption,
+                        "rows_count": len(request.excel_data),
+                        "caption": request.caption,
                         "telegram_response": result
                     }
                 else:
                     raise Exception(f"Telegram API error: {result}")
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка отправки документа: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка создания и отправки Excel: {str(e)}")
 
 @app.get("/api/browser/status")
 async def browser_status():
