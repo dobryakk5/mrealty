@@ -305,7 +305,8 @@ class W7DataSaver:
             'life_square': ad.get('life_square'),  # НОВОЕ: жилая площадь
             'built_year': ad.get('built_year'),  # НОВОЕ: год постройки
             'building_batch_name': ad.get('building_batch_name'),  # НОВОЕ: серия дома
-            'walls_material_type_id': walls_material_type_id  # НОВОЕ: тип материала стен (с маппингом)
+            'walls_material_type_id': walls_material_type_id,  # НОВОЕ: тип материала стен (с маппингом)
+            'is_actual': ad.get('is_deal_actual', True)  # НОВОЕ: признак активности объявления
         }
         
         return record
@@ -374,7 +375,8 @@ class W7DataSaver:
             life_square numeric(5,2),
             built_year smallint,
             building_batch_name text,
-            walls_material_type_id smallint
+            walls_material_type_id smallint,
+            is_actual boolean DEFAULT true
         )
         """
         
@@ -397,9 +399,9 @@ class W7DataSaver:
                 min_metro, address, tags, person_type, person, created_at,
                 object_type_id, source_updated, metro_id, district_id, processed, debug, proc_at,
                 ceiling_height, balcony_type_id, kitchen_square, life_square,
-                built_year, building_batch_name, walls_material_type_id
+                built_year, building_batch_name, walls_material_type_id, is_actual
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
             )
             ON CONFLICT (id) DO UPDATE SET
                 url = EXCLUDED.url,
@@ -424,7 +426,8 @@ class W7DataSaver:
                 life_square = EXCLUDED.life_square,
                 built_year = EXCLUDED.built_year,
                 building_batch_name = EXCLUDED.building_batch_name,
-                walls_material_type_id = EXCLUDED.walls_material_type_id
+                walls_material_type_id = EXCLUDED.walls_material_type_id,
+                is_actual = EXCLUDED.is_actual
             """
             
             saved_count = 0
@@ -445,7 +448,8 @@ class W7DataSaver:
                         record['object_type_id'], record['source_updated'], metro_id,
                         district_id, record['processed'], record['debug'], record['proc_at'],
                         record['ceiling_height'], record['balcony_type_id'], record['kitchen_square'], record['life_square'],
-                        record['built_year'], record['building_batch_name'], record['walls_material_type_id']
+                        record['built_year'], record['building_batch_name'], record['walls_material_type_id'],
+                        record['is_actual']
                     )
                     saved_count += 1
                     # Подробный лог убран - только счетчик
