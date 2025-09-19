@@ -486,11 +486,15 @@ class FlexibleCollector:
 
     async def search(self, **search_params) -> Optional[Dict[str, Any]]:
         """Выполняет поиск с заданными параметрами"""
-        
+
         payload = self.create_search_payload(**search_params)
         url = self.base_url + self.endpoint
-        
+
         print(f"🔍 Поиск с параметрами: {search_params}")
+
+        # Отладочный вывод для проверки is_first_published
+        if "published_days_ago" in payload["conditions"]:
+            print(f"📅 Параметр published_days_ago: {payload['conditions']['published_days_ago']}")
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -697,8 +701,8 @@ def parse_args():
     parser.add_argument('--days', type=int, default=PUBLISHED_DAYS_AGO,
                        help=f'Количество дней для поиска (по умолчанию: {PUBLISHED_DAYS_AGO})')
 
-    parser.add_argument('--rooms', type=str, default=','.join(map(str, ROOMS)),
-                       help=f'Комнаты через запятую, 0=студии (по умолчанию: {",".join(map(str, ROOMS))})')
+    parser.add_argument('--rooms', type=str, default=ROOMS,
+                       help=f'Комнаты: "all" или через запятую, 0=студии (по умолчанию: {ROOMS})')
 
     parser.add_argument('--inactive', action='store_true',
                        help='Искать только снятые объявления')
@@ -713,10 +717,20 @@ async def main():
 
     # Переопределяем настройки из аргументов
     days = args.days
-    rooms = [int(r.strip()) for r in args.rooms.split(',') if r.strip().isdigit()]
+
+    # Правильно обрабатываем rooms
+    if args.rooms == "all" or ROOMS == "all":
+        rooms = "all"
+    else:
+        rooms = [int(r.strip()) for r in args.rooms.split(',') if r.strip().isdigit()]
+
     deal_status = "inactive" if args.inactive else DEAL_STATUS
 
-    rooms_desc = ', '.join([f"{'студии' if r == 0 else f'{r}к'}" for r in rooms])
+    if isinstance(rooms, str) and rooms == "all":
+        rooms_desc = "ВСЕ КОМНАТЫ"
+    else:
+        rooms_desc = ', '.join([f"{'студии' if r == 0 else f'{r}к'}" for r in rooms])
+
     print(f"🏠 СБОР КВАРТИР: {rooms_desc.upper()}")
     print(f"📍 Локация: {LOCATION}")
     print(f"📺 Источники: {MEDIA}")
@@ -724,7 +738,7 @@ async def main():
     print(f"👤 Продавцы: {SELLER_TYPE}")
     print(f"📊 Статус сделок: {deal_status}")
     print(f"📅 Период: {days} дней")
-    print(f"🆕 Только новые объявления: {'ДА' if IS_FIRST_PUBLISHED else 'НЕТ'}")
+    print(f"🆕 Только новые объявления (first_published): {'ДА' if IS_FIRST_PUBLISHED else 'НЕТ'}")
     print("=" * 60)
 
     collector = FlexibleCollector()
