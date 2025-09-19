@@ -16,13 +16,13 @@ from save_to_ads_w7 import W7DataSaver
 ACCESS_TOKEN = "NN9m23AJSoREFwS2PMpsxHp4GRSuzp2227BXH0OyTBPpR0Rk39FQCScADwu5g0AE"
 USER_ID = "594465"
 ORDER_ID = "813ea25b-faae-4de4-9597-840f80f42495"
-WSCG = "32312d81-e769-4641-9090-234ff694ddbb"
+WSCG = "02e80c27-ecc9-4df9-8302-a10206bcf137"
 
 # ========== НАСТРОЙКИ ФИЛЬТРОВ ==========
 # Здесь задаются все параметры поиска
 
-# Комнатность (0 = студии, 1 = 1к, 2 = 2к, и т.д.)
-ROOMS = [0]  # Студии и 1-комнатные
+# Комнатность [0,1] (0 = студии, 1 = 1к, 2 = 2к, и т.д.)
+ROOMS = "all"  # Студии и 1-комнатные
 
 # Локация
 LOCATION = "moscow_old_only"  # moscow_all, moscow_no_zelenograd, moscow_old_only
@@ -44,7 +44,8 @@ MIN_PRICE = None
 MAX_PRICE = None
 
 # Период публикации (дни)
-PUBLISHED_DAYS_AGO = 180
+PUBLISHED_DAYS_AGO = 7
+is_first_published=True
 
 # Пагинация
 PAGE_SIZE = 400
@@ -87,9 +88,9 @@ class FlexibleCollector:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36'
         }
 
-    def create_base_payload(self, from_index: int = 0, size: int = 400, published_days_ago: int = 50) -> Dict[str, Any]:
+    def create_base_payload(self, from_index: int = 0, size: int = 400, published_days_ago: int = 50, is_first_published: bool = False) -> Dict[str, Any]:
         """Создает базовый payload с обязательными полями"""
-        
+
         # Агрегации - всегда одинаковые
         aggregations = {
             "avg_price_rub": True,
@@ -97,7 +98,7 @@ class FlexibleCollector:
             "avg_total_price_rub": True,
             "avg_sotka_price_rub": True
         }
-        
+
         # Поля для выборки - все нужные поля
         fields = [
             "guid", "deal_status_id", "user_deal_status_id", "winner_relevance", "w6_offer_id",
@@ -123,16 +124,20 @@ class FlexibleCollector:
             "video_list", "built_year", "client_association_list", "ownership_type_id", "sale_type_name",
             "rooms_adjacency_type_id"
         ]
-        
+
         # Сортировка - всегда одинаковая
         sort = [
             {"winner_relevance": {"order": "desc"}},
             {"w6_offer_id": {"order": "desc"}}
         ]
-        
+
         # Базовые условия - общие для всех запросов
+        published_filter = {"days": published_days_ago}
+        if is_first_published:
+            published_filter["is_first_published"] = True
+
         base_conditions = {
-            "published_days_ago": {"days": published_days_ago},
+            "published_days_ago": published_filter,
             "realty_section": {"code": ["flat"]},
             "deal_type": {"code": ["sale"]},
             "is_deal_actual": True
@@ -381,7 +386,9 @@ class FlexibleCollector:
                             min_price: Optional[int] = None,
                             max_price: Optional[int] = None,
                             # Период публикации
-                            published_days_ago: int = 50
+                            published_days_ago: int = 50,
+                            # Только новые объявления (первая публикация)
+                            is_first_published: bool = False
                             ) -> Dict[str, Any]:
         """
         Создает payload с гибкими фильтрами
@@ -398,7 +405,7 @@ class FlexibleCollector:
         """
         
         # Создаем базовый payload
-        payload = self.create_base_payload(from_index, size, published_days_ago)
+        payload = self.create_base_payload(from_index, size, published_days_ago, is_first_published)
         
         # Применяем фильтры локации
         if location == "moscow_all":
@@ -652,6 +659,33 @@ async def example_inactive_deals():
 
         # Сохраняем результат
         filename = f"inactive_deals_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        print(f"💾 Сохранено в: {filename}")
+
+async def example_new_ads_all_rooms():
+    """Пример: все комнаты, только новые объявления за неделю"""
+
+    collector = FlexibleCollector()
+
+    result = await collector.search(
+        location="moscow_old_only",       # Старая Москва
+        media="all",                      # Все источники (Яндекс, ЦИАН, АВИТО)
+        rooms="all",                      # ВСЕ КОМНАТЫ
+        building_type="old_only",         # Только вторичка
+        deal_status="active",             # Только активные
+        seller_type="all",                # Все продавцы
+        published_days_ago=7,             # За последнюю неделю
+        is_first_published=True,          # ТОЛЬКО НОВЫЕ ОБЪЯВЛЕНИЯ
+        size=400                          # Размер выборки
+    )
+
+    if result:
+        ads = result.get('advs', [])
+        print(f"📊 Получено {len(ads)} новых объявлений за неделю")
+
+        # Сохраняем результат
+        filename = f"new_ads_all_rooms_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         print(f"💾 Сохранено в: {filename}")
