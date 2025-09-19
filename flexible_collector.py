@@ -213,7 +213,12 @@ class FlexibleCollector:
     
     def set_rooms_all(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Все типы квартир"""
-        payload["conditions"]["total_room_count"] = [1, 2, 3, 4, 5]
+        # Для "все комнаты" НЕ указываем total_room_count вообще
+        if "total_room_count" in payload["conditions"]:
+            del payload["conditions"]["total_room_count"]
+        # Также не ограничиваем студии
+        if "is_studio" in payload["conditions"]:
+            del payload["conditions"]["is_studio"]
         return payload
     
     def set_rooms_1k(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -495,6 +500,18 @@ class FlexibleCollector:
         # Отладочный вывод для проверки is_first_published
         if "published_days_ago" in payload["conditions"]:
             print(f"📅 Параметр published_days_ago: {payload['conditions']['published_days_ago']}")
+
+        # Отладочный вывод для проверки комнат
+        if "total_room_count" in payload["conditions"]:
+            print(f"🏠 Параметр total_room_count: {payload['conditions']['total_room_count']}")
+        else:
+            print(f"🏠 Параметр total_room_count: НЕ УКАЗАН (все комнаты)")
+
+        # Отладочный вывод для проверки студий
+        if "is_studio" in payload["conditions"]:
+            print(f"🏢 Параметр is_studio: {payload['conditions']['is_studio']}")
+        else:
+            print(f"🏢 Параметр is_studio: НЕ УКАЗАН (включая студии)")
         
         try:
             async with aiohttp.ClientSession() as session:
