@@ -306,7 +306,7 @@ class W7DataSaver:
             'built_year': ad.get('built_year'),  # НОВОЕ: год постройки
             'building_batch_name': ad.get('building_batch_name'),  # НОВОЕ: серия дома
             'walls_material_type_id': walls_material_type_id,  # НОВОЕ: тип материала стен (с маппингом)
-            'is_actual': ad.get('is_deal_actual', True)  # НОВОЕ: признак активности объявления
+            'is_actual': ad.get('deal_status_id') == 1  # НОВОЕ: признак активности объявления (1=активное, 3=неактивное)
         }
         
         return record
