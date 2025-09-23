@@ -37,7 +37,7 @@ BUILDING_TYPE = "old_only"  # old_only, new_only, all
 SELLER_TYPE = "all"  # all, owner_only
 
 # Статус сделки
-DEAL_STATUS = "active"  # active, inactive, all
+DEAL_STATUS = "all"  # active, inactive, all
 
 # Цены (в рублях, None = без ограничения)
 MIN_PRICE = None
