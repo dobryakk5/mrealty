@@ -37,7 +37,7 @@ BUILDING_TYPE = "old_only"  # old_only, new_only, all
 SELLER_TYPE = "all"  # all, owner_only
 
 # Статус сделки
-DEAL_STATUS = "all"  # active, inactive, all
+STATUS = "all"  # active, inactive, all
 
 # Цены (в рублях, None = без ограничения)
 MIN_PRICE = None
@@ -386,7 +386,7 @@ class FlexibleCollector:
                             # Тип продавца
                             seller_type: str = "all",  # all, owner_only
                             # Статус сделки
-                            deal_status: str = "active",  # active, inactive, all
+                            status: str = "active",  # active, inactive, all
                             # Цены
                             min_price: Optional[int] = None,
                             max_price: Optional[int] = None,
@@ -405,7 +405,7 @@ class FlexibleCollector:
         - building_type: "old_only", "new_only", "all"
         - studio: "all", "studio_only", "no_studio"
         - seller_type: "all", "owner_only"
-        - deal_status: "active", "inactive", "all"
+        - status: "active", "inactive", "all"
         - min_price, max_price: диапазон цен в рублях
         """
         
@@ -475,11 +475,11 @@ class FlexibleCollector:
             payload = self.set_all_sellers(payload)
 
         # Применяем фильтры статуса сделки
-        if deal_status == "active":
+        if status == "active":
             payload = self.set_deal_active(payload)
-        elif deal_status == "inactive":
+        elif status == "inactive":
             payload = self.set_deal_inactive(payload)
-        elif deal_status == "all":
+        elif status == "all":
             payload = self.set_deal_all(payload)
 
         # Применяем фильтры цен
@@ -720,8 +720,9 @@ def parse_args():
     parser.add_argument('--rooms', type=str, default=ROOMS,
                        help=f'Комнаты: "all" или через запятую, 0=студии (по умолчанию: {ROOMS})')
 
-    parser.add_argument('--inactive', action='store_true',
-                       help='Искать только снятые объявления')
+    parser.add_argument('--status', type=str, default=STATUS,
+                       choices=['active', 'inactive', 'all'],
+                       help=f'Статус сделок: active, inactive, all (по умолчанию: {STATUS})')
 
     return parser.parse_args()
 
@@ -744,7 +745,7 @@ async def main():
     else:
         rooms = [int(r.strip()) for r in ROOMS.split(',') if r.strip().isdigit()]
 
-    deal_status = "inactive" if args.inactive else DEAL_STATUS
+    status = args.status
 
     if isinstance(rooms, str) and rooms == "all":
         rooms_desc = "ВСЕ КОМНАТЫ"
@@ -756,7 +757,7 @@ async def main():
     print(f"📺 Источники: {MEDIA}")
     print(f"🏢 Тип зданий: {BUILDING_TYPE}")
     print(f"👤 Продавцы: {SELLER_TYPE}")
-    print(f"📊 Статус сделок: {deal_status}")
+    print(f"📊 Статус сделок: {status}")
     print(f"📅 Период: {days} дней")
     print(f"🆕 Только новые объявления (first_published): {'ДА' if IS_FIRST_PUBLISHED else 'НЕТ'}")
     print("=" * 60)
@@ -777,7 +778,7 @@ async def main():
             rooms=rooms,                      # Используем аргумент
             building_type=BUILDING_TYPE,      # Используем переменную
             seller_type=SELLER_TYPE,          # Используем переменную
-            deal_status=deal_status,          # Используем аргумент
+            status=status,                    # Используем аргумент
             min_price=MIN_PRICE,              # Используем переменную
             max_price=MAX_PRICE,              # Используем переменную
             published_days_ago=days,          # Используем аргумент
