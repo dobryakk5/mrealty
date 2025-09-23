@@ -16,7 +16,7 @@ from save_to_ads_w7 import W7DataSaver
 ACCESS_TOKEN = "NN9m23AJSoREFwS2PMpsxHp4GRSuzp2227BXH0OyTBPpR0Rk39FQCScADwu5g0AE"
 USER_ID = "594465"
 ORDER_ID = "813ea25b-faae-4de4-9597-840f80f42495"
-WSCG = "02e80c27-ecc9-4df9-8302-a10206bcf137"
+WSCG = "590c4d50-f7ec-4306-a1be-d630422a9883"
 
 # ========== НАСТРОЙКИ ФИЛЬТРОВ ==========
 # Здесь задаются все параметры поиска
@@ -37,7 +37,7 @@ BUILDING_TYPE = "old_only"  # old_only, new_only, all
 SELLER_TYPE = "all"  # all, owner_only
 
 # Статус сделки
-DEAL_STATUS = "active"  # active, inactive, all
+DEAL_STATUS = "all"  # active, inactive, all
 
 # Цены (в рублях, None = без ограничения)
 MIN_PRICE = None
