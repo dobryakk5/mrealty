@@ -8,10 +8,15 @@ import aiohttp
 import json
 import argparse
 import asyncpg
+import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Union
+from dotenv import load_dotenv
 
 from save_to_ads_w7 import W7DataSaver
+
+# Загружаем переменные окружения
+load_dotenv()
 
 # Конфигурация токенов (загружается из БД)
 ACCESS_TOKEN = None
@@ -59,13 +64,12 @@ def get_current_utc_timestamp():
 async def load_config_from_db():
     """Загружает конфигурацию из таблицы users.params"""
     try:
-        conn = await asyncpg.connect(
-            host='localhost',
-            port=5432,
-            user='postgres',
-            password='123',
-            database='realty'
-        )
+        database_url = os.getenv('DATABASE_URL')
+        if not database_url:
+            print("❌ DATABASE_URL не найден в .env файле")
+            return {}
+
+        conn = await asyncpg.connect(database_url)
 
         records = await conn.fetch('SELECT code, data FROM users.params WHERE code IN ($1, $2)', 'w7_token', 'w7_WSCG')
 
