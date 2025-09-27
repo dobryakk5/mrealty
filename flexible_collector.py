@@ -7,16 +7,17 @@ import asyncio
 import aiohttp
 import json
 import argparse
+import asyncpg
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Union
 
 from save_to_ads_w7 import W7DataSaver
 
-# Конфигурация токенов
-ACCESS_TOKEN = "NN9m23AJSoREFwS2PMpsxHp4GRSuzp2227BXH0OyTBPpR0Rk39FQCScADwu5g0AE"
+# Конфигурация токенов (загружается из БД)
+ACCESS_TOKEN = None
 USER_ID = "594465"
 ORDER_ID = "813ea25b-faae-4de4-9597-840f80f42495"
-WSCG = "undefined"
+WSCG = None
 
 # ========== НАСТРОЙКИ ФИЛЬТРОВ ==========
 # Здесь задаются все параметры поиска
@@ -55,12 +56,42 @@ def get_current_utc_timestamp():
     """Генерирует текущее UTC время в формате wsct"""
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
 
+async def load_config_from_db():
+    """Загружает конфигурацию из таблицы users.params"""
+    try:
+        conn = await asyncpg.connect(
+            host='localhost',
+            port=5432,
+            user='postgres',
+            password='123',
+            database='realty'
+        )
+
+        records = await conn.fetch('SELECT code, data FROM users.params WHERE code IN ($1, $2)', 'w7_token', 'w7_WSCG')
+
+        config = {}
+        for record in records:
+            config[record['code']] = record['data']
+
+        await conn.close()
+
+        print(f"📋 Найденные w7 параметры:")
+        for code, data in config.items():
+            print(f"   {code}: {data[:50]}{'...' if len(str(data)) > 50 else ''}")
+
+        return config
+
+    except Exception as e:
+        print(f"❌ Ошибка загрузки конфигурации из БД: {e}")
+        print("⚠️ Используйте резервные значения или проверьте подключение к БД")
+        return {}
+
 class FlexibleCollector:
-    def __init__(self):
+    def __init__(self, access_token=None, wscg=None):
         self.user_id = USER_ID
-        self.access_token = ACCESS_TOKEN
+        self.access_token = access_token or ACCESS_TOKEN
         self.order_id = ORDER_ID
-        self.wscg = WSCG
+        self.wscg = wscg or WSCG
         self.wsct = get_current_utc_timestamp()
         
         self.base_url = "https://mls.baza-winner.ru"
@@ -729,6 +760,18 @@ def parse_args():
 async def main():
     """Основной сбор с настройками из аргументов и переменных"""
 
+    # Загружаем конфигурацию из БД
+    config = await load_config_from_db()
+
+    access_token = config.get('w7_token')
+    wscg = config.get('w7_WSCG')
+
+    if not access_token or not wscg:
+        print("❌ Не удалось загрузить токены из БД. Проверьте конфигурацию.")
+        return
+
+    print("✅ Токены загружены из БД успешно!\n")
+
     # Парсим аргументы командной строки
     args = parse_args()
 
@@ -762,7 +805,7 @@ async def main():
     print(f"🆕 Только новые объявления (first_published): {'ДА' if IS_FIRST_PUBLISHED else 'НЕТ'}")
     print("=" * 60)
 
-    collector = FlexibleCollector()
+    collector = FlexibleCollector(access_token=access_token, wscg=wscg)
 
     all_ads = []
     total_found = 0

@@ -55,6 +55,14 @@ except ImportError:
     BAZA_WINNER_AVAILABLE = False
     print("⚠️ Модуль baza_winner_parser не найден, парсинг Baza Winner недоступен")
 
+# Импортируем расширенный сборщик данных
+try:
+    from extended_data_collector import get_property_by_guid
+    EXTENDED_COLLECTOR_AVAILABLE = True
+except ImportError:
+    EXTENDED_COLLECTOR_AVAILABLE = False
+    print("⚠️ Модуль extended_data_collector не найден, получение данных по GUID недоступно")
+
 # Заголовки для HTTP-запросов
 HEADERS = {
     'User-Agent': (
@@ -1330,6 +1338,8 @@ async def health_check():
         "avito_available": AVITO_AVAILABLE,
         "cian_available": True,
         "yandex_available": YANDEX_AVAILABLE,
+        "baza_winner_available": BAZA_WINNER_AVAILABLE,
+        "extended_collector_available": EXTENDED_COLLECTOR_AVAILABLE,
         "persistent_browser": browser_status
     }
 
@@ -1479,6 +1489,39 @@ async def refresh_browser():
             "message": "Ошибка обновления сессии браузера"
         }
 
+@app.get("/api/property/guid/{guid}")
+async def get_property_by_guid_endpoint(guid: str):
+    """Получение данных квартиры по GUID в формате ЦИАН"""
+    if not EXTENDED_COLLECTOR_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Сервис получения данных по GUID недоступен"
+        )
+
+    try:
+        property_data = await get_property_by_guid(guid)
+
+        if property_data:
+            return {
+                "success": True,
+                "data": property_data,
+                "guid": guid,
+                "format": "cian_compatible",
+                "message": "Данные объявления успешно получены по GUID",
+                "timestamp": str(datetime.now())
+            }
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Объявление с GUID {guid} не найдено"
+            )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка получения данных по GUID: {str(e)}"
+        )
+
 @app.get("/api/sources")
 async def get_supported_sources():
     """Получение списка поддерживаемых источников"""
@@ -1501,6 +1544,12 @@ async def get_supported_sources():
                 "domain": "realty.yandex.ru",
                 "available": YANDEX_AVAILABLE,
                 "source_id": "yandex"
+            },
+            {
+                "name": "Baza Winner (GUID)",
+                "domain": "baza-winner.ru",
+                "available": EXTENDED_COLLECTOR_AVAILABLE,
+                "source_id": "baza_winner_guid"
             }
         ]
     }
@@ -1598,6 +1647,32 @@ async def api_documentation():
                         "data": ["array of PropertyData objects"],
                         "total": 1,
                         "message": "Извлечено 1 URL, успешно спарсено 1 объявлений"
+                    }
+                },
+                "GET /api/property/guid/{guid}": {
+                    "description": "Получение данных квартиры по GUID в формате ЦИАН",
+                    "parameters": {
+                        "guid": "GUID объявления из Baza Winner (обязательный)"
+                    },
+                    "example": "/api/property/guid/0D5F135E-7791-0000-0FA2-005B7F230000",
+                    "response": {
+                        "success": True,
+                        "data": {
+                            "URL": "https://www.cian.ru/sale/flat/322177282/",
+                            "Комнат": 1,
+                            "Цена_raw": 6750000,
+                            "Общая площадь": 19.1,
+                            "Этаж": 1,
+                            "Всего этажей": 5,
+                            "Материал стен": "монолитный",
+                            "Адрес": "Москва г., Ирининский 2-й пер., 4",
+                            "Минут метро": "11 Бауманская м.",
+                            "Описание": "Комната, назначение: жилое...",
+                            "GUID": "0D5F135E-7791-0000-0FA2-005B7F230000"
+                        },
+                        "guid": "0D5F135E-7791-0000-0FA2-005B7F230000",
+                        "format": "cian_compatible",
+                        "message": "Данные объявления успешно получены по GUID"
                     }
                 }
             },
@@ -1785,6 +1860,14 @@ async def api_docs_html():
             <p><strong>Парсинг из текста</strong> - автоматически извлекает URL</p>
             <div class="example">
                 <strong>Body:</strong> <code>{"text": "Текст с URL объявлений"}</code>
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span> <code>/api/property/guid/{guid}</code>
+            <p><strong>Данные по GUID</strong> - получает детальную информацию из Baza Winner по GUID в формате ЦИАН</p>
+            <div class="example">
+                <strong>Возвращает:</strong> полные данные квартиры в совместимом с ЦИАН формате
             </div>
         </div>
 
