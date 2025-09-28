@@ -296,18 +296,6 @@ class ExtendedDataCollector:
         metro_station = extended_data.get('geo_cache_subway_station_name_1')
         metro_time = extended_data.get('walking_access_1')
 
-        # Определяем source по домену URL
-        url = extended_data.get('external_url', '')
-        source = "unknown"
-        if 'avito.ru' in url:
-            source = "avito"
-        elif 'cian.ru' in url:
-            source = "cian"
-        elif 'yandex.ru' in url:
-            source = "yandex"
-        elif url:
-            source = "other"
-
         # Формат как в CIAN parser
         cian_format = {
             "rooms": extended_data.get('total_room_count'),
@@ -331,8 +319,8 @@ class ExtendedDataCollector:
             "tags": extended_data.get('building_batch_name'),  # Используем серию дома как тег
             "description": extended_data.get('note'),
             "photo_urls": photo_urls,
-            "source": source,  # Определяем по домену URL
-            "url": url,
+            "source": "w7_baza_winner",
+            "url": extended_data.get('external_url'),
             "status": True,  # Данные из активного источника
             "views_today": None  # W7 не предоставляет статистику просмотров
         }
@@ -345,20 +333,6 @@ extended_collector = ExtendedDataCollector()
 
 
 async def get_property_by_guid(guid: str) -> Optional[Dict[str, Any]]:
-    """Получает данные объявления по GUID в формате CIAN parser"""
-    try:
-        # Получаем расширенные данные
-        extended_data = await extended_collector.get_extended_data_by_guid(guid)
-        if not extended_data:
-            return None
-
-        # Конвертируем в формат CIAN parser
-        cian_format = extended_collector.convert_to_cian_format(extended_data)
-        return cian_format
-
-    except Exception as e:
-        print(f"❌ Ошибка получения данных по GUID {guid}: {e}")
-        return None
 
         # Этаж
         if extended_data.get('storey') and extended_data.get('storeys_count'):

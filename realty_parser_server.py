@@ -1505,10 +1505,7 @@ async def get_property_by_guid_endpoint(guid: str):
             return {
                 "success": True,
                 "data": property_data,
-                "guid": guid,
-                "format": "cian_compatible",
-                "message": "Данные объявления успешно получены по GUID",
-                "timestamp": str(datetime.now())
+                "message": "Объявление успешно спарсено по GUID"
             }
         else:
             raise HTTPException(
