@@ -182,6 +182,57 @@ class ExtendedDataCollector:
 
         return payload
 
+    async def get_photo_list_by_guid(self, guid: str) -> Optional[Dict[str, Any]]:
+        """Получает детализированный список фото по GUID объявления"""
+
+        # Убеждаемся, что конфигурация загружена
+        await self.ensure_config_loaded()
+
+        payload = {
+            "filters": {
+                "guid": guid
+            },
+            "conditions": {
+                "realty_section": {"code": ["flat"]},
+                "area": {"code": ["msk"]},
+                "deal_type": {"code": ["sale"]}
+            },
+            "from": 0,
+            "size": 1,
+            "dsl_version": 3,
+            "fields": ["photo_list"]
+        }
+
+        url = self.base_url + self.endpoint
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    params=self.query_params,
+                    json=payload,
+                    headers=self.headers,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+
+                    if response.status == 200:
+                        data = await response.json()
+
+                        if 'advs' in data and len(data['advs']) > 0:
+                            return data['advs'][0]
+                        else:
+                            print(f"❌ Не найдено объявление с GUID: {guid}")
+                            return None
+
+                    else:
+                        text = await response.text()
+                        print(f"❌ HTTP {response.status}: {text[:200]}")
+                        return None
+
+        except Exception as e:
+            print(f"💥 Ошибка запроса photo_list: {e}")
+            return None
+
     async def get_extended_data_by_guid(self, guid: str) -> Optional[Dict[str, Any]]:
         """Получает расширенные данные по GUID объявления"""
 
@@ -266,8 +317,11 @@ class ExtendedDataCollector:
         if extended_data.get('building_batch_name'):
             cian_format['Строительная серия'] = extended_data.get('building_batch_name')
 
-        # Адрес
-        cian_format['Адрес'] = extended_data.get('address')
+        # Адрес (убираем "Москва г., " из начала)
+        address = extended_data.get('address', '')
+        if address and address.startswith('Москва г., '):
+            address = address[11:]  # Убираем "Москва г., "
+        cian_format['Адрес'] = address
 
         # Метро
         metro_station = extended_data.get('geo_cache_subway_station_name_1')
@@ -320,9 +374,24 @@ class ExtendedDataCollector:
         # Источник
         cian_format['Источник'] = extended_data.get('media_name', 'Baza Winner')
 
+        # Фотографии (конвертируем ID в рабочие URL, только 1024x768)
+        photo_list = extended_data.get('photo_list', '')
+        if photo_list and isinstance(photo_list, str):
+            photo_ids = photo_list.split(',')
+            photo_urls = []
+
+            for photo_id in photo_ids:
+                photo_id = photo_id.strip()
+                if photo_id:
+                    # URL для фотографий Baza Winner в размере 1024x768
+                    photo_url = f"https://images.baza-winner.ru/{photo_id}_1024x768"
+                    photo_urls.append(photo_url)
+
+            if photo_urls:
+                cian_format['Фотографии'] = photo_urls
+                cian_format['Количество фото'] = len(photo_urls)
+
         # Системные поля
-        cian_format['GUID'] = extended_data.get('guid')
-        cian_format['Object GUID'] = extended_data.get('object_guid')
         cian_format['ID объявления'] = extended_data.get('w6_offer_id')
         cian_format['External ID'] = extended_data.get('external_id')
 
