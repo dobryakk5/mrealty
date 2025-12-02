@@ -39,35 +39,9 @@ import argparse
 import asyncio
 import re
 import time
+import requests
 from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
-
-# Определяем какую библиотеку использовать для обхода Cloudflare
-USE_CURL_CFFI = False
-USE_CLOUDSCRAPER = False
-scraper = None
-
-try:
-    from curl_cffi import requests
-    USE_CURL_CFFI = True
-    print("[INFO] Используется curl_cffi для обхода Cloudflare")
-except ImportError:
-    try:
-        import cloudscraper
-        import requests
-        USE_CLOUDSCRAPER = True
-        scraper = cloudscraper.create_scraper(
-            browser={
-                'browser': 'chrome',
-                'platform': 'linux',
-                'desktop': True
-            }
-        )
-        print("[INFO] Используется cloudscraper для обхода Cloudflare")
-    except ImportError:
-        import requests
-        print("[WARNING] curl_cffi и cloudscraper не установлены, используется обычный requests")
-        print("[WARNING] Установите: pip install curl_cffi  или  pip install cloudscraper")
 
 # Импортируем функции работы с БД
 from parse_todb import (
@@ -165,7 +139,7 @@ MAX_PAGES = 100  # Увеличено для работы с логикой ос
 MAX_URLS = 30
 # Пауза между страницами по требованию (в секундах)
 REQUEST_DELAY = 1.0  # Измените на нужное значение (например: 2.0, 5.0)
-PROXY = None  # "http://user:pass@proxy:port" - для включения прокси
+PROXY = None #"http://qEpxaS:uq2shh@194.67.220.161:9889"  # None - для отключения прокси
 
 # по метро
 METRO_ID = "all"  # "all" для всех станций, или конкретный ID (например: 68 для "Маяковская")
@@ -193,7 +167,22 @@ HEADERS = {
 
 # Cookies для обхода блокировки (получены через cloudscraper на сервере)
 # Попробуйте сначала без cookies - прокси может работать и так
-COOKIES = {}
+COOKIES = {
+    '_CIAN_GK': '39b79a26-aad8-4fb2-b262-9fa418fe2fe2',
+    'cf_clearance': 'N7RGiOw4bdAt7HGLyxuiVp9kD2VSq1vsg6.sP7frOMc-1742231440-1.2.1.1-eCOulEI3Rwyu6kluR1yJ5BOXCeEcCAeaX3MD5jZpFiUTFQRak1Y6lGVBWGgfzmRxTKp_vpMooBBtWbvqRAcdBb2g_.iLsHILsWb0Utp0pHsAA2HcTN6dKhYSjvOE6KaORqh6Js_CITX4uqef4tlb0MmK4XWak5MBxpFK.nRwJKfC98pY2C4Q71yaI0t25axRlEXXtAO1SQOqIxTlD9KwdKOapF6DRgxSI8T4.2Ukqu3GkHiW5uCeFx7GFET1NqQEHGlwn9qMERqKbo3AB9UvVngyspgczcTdYtDKza.w.q9YT.9k4OQpS78gGdCQa0Fn9xA7Gwy78NMxnDhdTr__sDyZTJGLc8uuwrr.DKrtfmU',
+    '_ym_uid': '1742231441797294391',
+    'adrdel': '1742231441929',
+    'adrcid': 'AMDBlALQs2wgATzBWuMI9mg',
+    'acs_3': '%7B%22hash%22%3A%221aa3f9523ee6c2690cb34fc702d4143056487c0d%22%2C%22nst%22%3A1742317841994%2C%22sl%22%3A%7B%22224%22%3A1742231441994%2C%221228%22%3A1742231441994%7D%7D',
+    'ma_id': '3120047371750515096073',
+    '_ym_d': '1758035300',
+    '__ai_fp_uuid': '0da75de85008594e%3A4',
+    'login_mro_popup': '1',
+    '_yasc': 'YNSa5vdO4kyQ4pSAEGxlrNimw6efqkjiqPHUswO9LQyDYuQPzTCJpJwcpyK0DL2jLg==',
+    'sopr_utm': '%7B%22utm_source%22%3A+%22direct%22%2C+%22utm_medium%22%3A+%22None%22%7D',
+    'sopr_session': 'd90f8dc7cefb42fd',
+    'cookie_agreement_accepted': '1',
+}
 # COOKIES = {
 #     '_CIAN_GK': 'c1a120a0-3b2c-4467-a7f8-ff2253920076',
 #     'session_region_id': '1',
@@ -741,51 +730,15 @@ async def process_single_metro_station(
             print(f"   📄 Страница {page}: {page_url}")
             
             # Получаем страницу
-            if USE_CURL_CFFI:
-                # Используем curl_cffi с impersonate для обхода Cloudflare
-                session = requests.Session()
+            session = requests.Session()
+            if proxy:
+                session.proxies = {'http': proxy, 'https': proxy}
 
-                # Параметры запроса
-                request_params = {
-                    'headers': HEADERS,
-                    'timeout': 30,
-                    'impersonate': 'chrome124'  # Имитируем Chrome 124
-                }
+            # Добавляем cookies если они есть
+            if COOKIES:
+                session.cookies.update(COOKIES)
 
-                if proxy:
-                    request_params['proxies'] = {'http': proxy, 'https': proxy}
-
-                if COOKIES:
-                    request_params['cookies'] = COOKIES
-
-                response = session.get(page_url, **request_params)
-
-            elif USE_CLOUDSCRAPER:
-                # Используем cloudscraper для обхода Cloudflare
-                request_params = {
-                    'headers': HEADERS,
-                    'timeout': 30
-                }
-
-                if proxy:
-                    request_params['proxies'] = {'http': proxy, 'https': proxy}
-
-                if COOKIES:
-                    scraper.cookies.update(COOKIES)
-
-                response = scraper.get(page_url, **request_params)
-
-            else:
-                # Обычный requests (может не работать с Cloudflare)
-                session = requests.Session()
-                if proxy:
-                    session.proxies = {'http': proxy, 'https': proxy}
-
-                if COOKIES:
-                    session.cookies.update(COOKIES)
-
-                response = session.get(page_url, headers=HEADERS, timeout=30)
-
+            response = session.get(page_url, headers=HEADERS, timeout=30)
             response.raise_for_status()
             
             # Парсим HTML
