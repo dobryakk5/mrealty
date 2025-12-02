@@ -152,8 +152,24 @@ FOOT_MIN = 15  # Время в пути до метро в минутах (на�
 # URL будет: https://www.cian.ru/cat.php?deal_type=sale&engine_version=2&foot_min=20&metro%5B0%5D=68&offer_type=flat&only_foot=2
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-    'Accept-Language': 'ru-RU,ru;q=0.9',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Cache-Control': 'max-age=0',
+}
+
+# Cookies для обхода блокировки (обновите на свежие из браузера)
+COOKIES = {
+    # Добавьте сюда свежие cookies из браузера
+    # Пример: '_CIAN_GK': 'значение', 'session_main_town_region_id': '1'
+    _CIAN_GK=39b79a26-aad8-4fb2-b262-9fa418fe2fe2; cf_clearance=N7RGiOw4bdAt7HGLyxuiVp9kD2VSq1vsg6.sP7frOMc-1742231440-1.2.1.1-eCOulEI3Rwyu6kluR1yJ5BOXCeEcCAeaX3MD5jZpFiUTFQRak1Y6lGVBWGgfzmRxTKp_vpMooBBtWbvqRAcdBb2g_.iLsHILsWb0Utp0pHsAA2HcTN6dKhYSjvOE6KaORqh6Js_CITX4uqef4tlb0MmK4XWak5MBxpFK.nRwJKfC98pY2C4Q71yaI0t25axRlEXXtAO1SQOqIxTlD9KwdKOapF6DRgxSI8T4.2Ukqu3GkHiW5uCeFx7GFET1NqQEHGlwn9qMERqKbo3AB9UvVngyspgczcTdYtDKza.w.q9YT.9k4OQpS78gGdCQa0Fn9xA7Gwy78NMxnDhdTr__sDyZTJGLc8uuwrr.DKrtfmU; _ym_uid=1742231441797294391; adrdel=1742231441929; adrdel=1742231441929; adrcid=AMDBlALQs2wgATzBWuMI9mg; adrcid=AMDBlALQs2wgATzBWuMI9mg; acs_3=%7B%22hash%22%3A%221aa3f9523ee6c2690cb34fc702d4143056487c0d%22%2C%22nst%22%3A1742317841994%2C%22sl%22%3A%7B%22224%22%3A1742231441994%2C%221228%22%3A1742231441994%7D%7D; acs_3=%7B%22hash%22%3A%221aa3f9523ee6c2690cb34fc702d4143056487c0d%22%2C%22nst%22%3A1742317841994%2C%22sl%22%3A%7B%22224%22%3A1742231441994%2C%221228%22%3A1742231441994%7D%7D; ma_id=3120047371750515096073; _ym_d=1758035300; __ai_fp_uuid=0da75de85008594e%3A4; session_region_id=1; session_main_town_region_id=1; login_mro_popup=1; _yasc=YNSa5vdO4kyQ4pSAEGxlrNimw6efqkjiqPHUswO9LQyDYuQPzTCJpJwcpyK0DL2jLg==; sopr_utm=%7B%22utm_source%22%3A+%22direct%22%2C+%22utm_medium%22%3A+%22None%22%7D; sopr_session=d90f8dc7cefb42fd; cookie_agreement_accepted=1
 }
 
 # ========== УТИЛИТЫ ==========
@@ -699,7 +715,11 @@ async def process_single_metro_station(
             session = requests.Session()
             if proxy:
                 session.proxies = {'http': proxy, 'https': proxy}
-            
+
+            # Добавляем cookies если они есть
+            if COOKIES:
+                session.cookies.update(COOKIES)
+
             response = session.get(page_url, headers=HEADERS, timeout=30)
             response.raise_for_status()
             
