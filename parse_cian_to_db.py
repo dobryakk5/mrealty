@@ -167,9 +167,22 @@ HEADERS = {
 
 # Cookies для обхода блокировки (обновите на свежие из браузера)
 COOKIES = {
-    # Добавьте сюда свежие cookies из браузера
-    # Пример: '_CIAN_GK': 'значение', 'session_main_town_region_id': '1'
-    _CIAN_GK=39b79a26-aad8-4fb2-b262-9fa418fe2fe2; cf_clearance=N7RGiOw4bdAt7HGLyxuiVp9kD2VSq1vsg6.sP7frOMc-1742231440-1.2.1.1-eCOulEI3Rwyu6kluR1yJ5BOXCeEcCAeaX3MD5jZpFiUTFQRak1Y6lGVBWGgfzmRxTKp_vpMooBBtWbvqRAcdBb2g_.iLsHILsWb0Utp0pHsAA2HcTN6dKhYSjvOE6KaORqh6Js_CITX4uqef4tlb0MmK4XWak5MBxpFK.nRwJKfC98pY2C4Q71yaI0t25axRlEXXtAO1SQOqIxTlD9KwdKOapF6DRgxSI8T4.2Ukqu3GkHiW5uCeFx7GFET1NqQEHGlwn9qMERqKbo3AB9UvVngyspgczcTdYtDKza.w.q9YT.9k4OQpS78gGdCQa0Fn9xA7Gwy78NMxnDhdTr__sDyZTJGLc8uuwrr.DKrtfmU; _ym_uid=1742231441797294391; adrdel=1742231441929; adrdel=1742231441929; adrcid=AMDBlALQs2wgATzBWuMI9mg; adrcid=AMDBlALQs2wgATzBWuMI9mg; acs_3=%7B%22hash%22%3A%221aa3f9523ee6c2690cb34fc702d4143056487c0d%22%2C%22nst%22%3A1742317841994%2C%22sl%22%3A%7B%22224%22%3A1742231441994%2C%221228%22%3A1742231441994%7D%7D; acs_3=%7B%22hash%22%3A%221aa3f9523ee6c2690cb34fc702d4143056487c0d%22%2C%22nst%22%3A1742317841994%2C%22sl%22%3A%7B%22224%22%3A1742231441994%2C%221228%22%3A1742231441994%7D%7D; ma_id=3120047371750515096073; _ym_d=1758035300; __ai_fp_uuid=0da75de85008594e%3A4; session_region_id=1; session_main_town_region_id=1; login_mro_popup=1; _yasc=YNSa5vdO4kyQ4pSAEGxlrNimw6efqkjiqPHUswO9LQyDYuQPzTCJpJwcpyK0DL2jLg==; sopr_utm=%7B%22utm_source%22%3A+%22direct%22%2C+%22utm_medium%22%3A+%22None%22%7D; sopr_session=d90f8dc7cefb42fd; cookie_agreement_accepted=1
+    '_CIAN_GK': '39b79a26-aad8-4fb2-b262-9fa418fe2fe2',
+    'cf_clearance': 'N7RGiOw4bdAt7HGLyxuiVp9kD2VSq1vsg6.sP7frOMc-1742231440-1.2.1.1-eCOulEI3Rwyu6kluR1yJ5BOXCeEcCAeaX3MD5jZpFiUTFQRak1Y6lGVBWGgfzmRxTKp_vpMooBBtWbvqRAcdBb2g_.iLsHILsWb0Utp0pHsAA2HcTN6dKhYSjvOE6KaORqh6Js_CITX4uqef4tlb0MmK4XWak5MBxpFK.nRwJKfC98pY2C4Q71yaI0t25axRlEXXtAO1SQOqIxTlD9KwdKOapF6DRgxSI8T4.2Ukqu3GkHiW5uCeFx7GFET1NqQEHGlwn9qMERqKbo3AB9UvVngyspgczcTdYtDKza.w.q9YT.9k4OQpS78gGdCQa0Fn9xA7Gwy78NMxnDhdTr__sDyZTJGLc8uuwrr.DKrtfmU',
+    '_ym_uid': '1742231441797294391',
+    'adrdel': '1742231441929',
+    'adrcid': 'AMDBlALQs2wgATzBWuMI9mg',
+    'acs_3': '%7B%22hash%22%3A%221aa3f9523ee6c2690cb34fc702d4143056487c0d%22%2C%22nst%22%3A1742317841994%2C%22sl%22%3A%7B%22224%22%3A1742231441994%2C%221228%22%3A1742231441994%7D%7D',
+    'ma_id': '3120047371750515096073',
+    '_ym_d': '1758035300',
+    '__ai_fp_uuid': '0da75de85008594e%3A4',
+    'session_region_id': '1',
+    'session_main_town_region_id': '1',
+    'login_mro_popup': '1',
+    '_yasc': 'YNSa5vdO4kyQ4pSAEGxlrNimw6efqkjiqPHUswO9LQyDYuQPzTCJpJwcpyK0DL2jLg==',
+    'sopr_utm': '%7B%22utm_source%22%3A+%22direct%22%2C+%22utm_medium%22%3A+%22None%22%7D',
+    'sopr_session': 'd90f8dc7cefb42fd',
+    'cookie_agreement_accepted': '1',
 }
 
 # ========== УТИЛИТЫ ==========
@@ -353,7 +366,7 @@ def parse_card_seller(card_tag):
     n = (seller['name'] or "").lower()
     if re.search(r'собственник', b) or re.search(r'\bсобственник\b', n):
         seller['type'] = 'owner'
-    elif re.search(r'агент|агентство|риэлтор', b) or re.search(r'агент|agency|realtor', n):
+    elif re.search(r'агент|агентство|риэлтор|риелтор', b) or re.search(r'агент|agency|realtor|риелтор', n):
         seller['type'] = 'agency'
     elif re.search(r'застройщик|developer', b) or re.search(r'\bзастройщик\b|developer', n):
         seller['type'] = 'developer'

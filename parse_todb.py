@@ -271,12 +271,13 @@ async def save_cian_ad(ad_data: Dict) -> bool:
             if seller.get('type'):
                 type_mapping = {
                     'owner': 3,
-                    'agency': 2, 
+                    'agency': 2,
                     'user': 5,
                     'private': 1,
-                    'developer': 4
+                    'developer': 4,
+                    'unknown': None  # Неизвестный тип → NULL в БД
                 }
-                person_type = type_mapping.get(seller['type'], seller['type'])
+                person_type = type_mapping.get(seller['type'], None)  # Для неизвестных типов → NULL
             
             if seller.get('name'):
                 # Очищаем имя от лишнего текста
