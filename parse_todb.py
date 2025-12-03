@@ -28,7 +28,7 @@ async def _get_cian_pool() -> asyncpg.Pool:
 
 
 async def create_ads_cian_table() -> None:
-    """Создает таблицу ads_cian для хранения объявлений с CIAN"""
+    """Создает таблицу ads_cian для хранения объявлений с CIAN и хранимую процедуру для сохранения"""
     pool = await _get_cian_pool()
     async with pool.acquire() as conn:
         try:
@@ -56,13 +56,107 @@ async def create_ads_cian_table() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(avitoid)
             );
-            
+
             CREATE INDEX IF NOT EXISTS idx_ads_cian_avitoid ON ads_cian(avitoid);
             CREATE INDEX IF NOT EXISTS idx_ads_cian_processed ON ads_cian(processed);
-            
+
             """)
+
+            # Удаляем старую функцию если существует (для сброса кэша типов)
+            await conn.execute("""
+            DROP FUNCTION IF EXISTS upsert_cian_ad(TEXT, NUMERIC, BIGINT, SMALLINT, NUMERIC, SMALLINT, SMALLINT, TEXT, INTEGER, SMALLINT, TEXT, INTEGER, TEXT, TEXT, TEXT, SMALLINT, TIMESTAMP, BOOLEAN);
+            DROP FUNCTION IF EXISTS upsert_cian_ad(TEXT, NUMERIC, BIGINT, SMALLINT, NUMERIC, SMALLINT, SMALLINT, TEXT, INTEGER, SMALLINT, TEXT, INTEGER, TEXT, SMALLINT, TEXT, SMALLINT, TIMESTAMP, BOOLEAN);
+            """)
+
+            # Создаем хранимую процедуру для сохранения объявлений
+            await conn.execute("""
+            CREATE OR REPLACE FUNCTION upsert_cian_ad(
+                p_url TEXT,
+                p_avitoid NUMERIC,
+                p_price BIGINT,
+                p_rooms SMALLINT,
+                p_area NUMERIC,
+                p_floor SMALLINT,
+                p_total_floors SMALLINT,
+                p_complex TEXT,
+                p_metro_id INTEGER,
+                p_min_metro SMALLINT,
+                p_address TEXT,
+                p_district_id INTEGER,
+                p_tags TEXT,
+                p_person_type SMALLINT,
+                p_person TEXT,
+                p_object_type_id SMALLINT,
+                p_source_created TIMESTAMP,
+                p_should_mark_processed BOOLEAN
+            ) RETURNS TABLE(
+                operation_type TEXT,
+                old_price BIGINT,
+                new_price BIGINT,
+                is_new_record BOOLEAN
+            ) AS $$
+            DECLARE
+                v_old_price BIGINT;
+                v_exists BOOLEAN;
+                v_price_changed BOOLEAN;
+            BEGIN
+                -- Проверяем существование записи и получаем старую цену
+                SELECT price INTO v_old_price
+                FROM ads_cian
+                WHERE avitoid = p_avitoid;
+
+                v_exists := FOUND;
+                v_price_changed := (v_old_price IS DISTINCT FROM p_price);
+
+                -- Выполняем INSERT ... ON CONFLICT
+                INSERT INTO ads_cian (
+                    url, avitoid, price, rooms, area, floor, total_floors,
+                    complex, metro_id, min_metro, address, district_id, tags,
+                    person_type, person, object_type_id, source_created, processed
+                ) VALUES (
+                    p_url, p_avitoid, p_price, p_rooms, p_area, p_floor, p_total_floors,
+                    p_complex, p_metro_id, p_min_metro, p_address, p_district_id, p_tags,
+                    p_person_type, p_person, p_object_type_id, p_source_created, p_should_mark_processed
+                )
+                ON CONFLICT (avitoid) DO UPDATE SET
+                    url = EXCLUDED.url,
+                    price = EXCLUDED.price,
+                    rooms = EXCLUDED.rooms,
+                    area = EXCLUDED.area,
+                    floor = EXCLUDED.floor,
+                    total_floors = EXCLUDED.total_floors,
+                    complex = EXCLUDED.complex,
+                    metro_id = EXCLUDED.metro_id,
+                    min_metro = EXCLUDED.min_metro,
+                    address = EXCLUDED.address,
+                    district_id = EXCLUDED.district_id,
+                    tags = EXCLUDED.tags,
+                    person_type = EXCLUDED.person_type,
+                    person = EXCLUDED.person,
+                    object_type_id = EXCLUDED.object_type_id,
+                    source_created = EXCLUDED.source_created,
+                    processed = CASE
+                        WHEN ads_cian.price IS DISTINCT FROM EXCLUDED.price THEN FALSE
+                        ELSE EXCLUDED.processed
+                    END;
+
+                -- Возвращаем результат
+                IF NOT v_exists THEN
+                    -- Новая запись
+                    RETURN QUERY SELECT 'inserted'::TEXT, NULL::BIGINT, p_price, TRUE;
+                ELSIF v_price_changed THEN
+                    -- Обновление с изменением цены
+                    RETURN QUERY SELECT 'updated'::TEXT, v_old_price, p_price, TRUE;
+                ELSE
+                    -- Дубликат без изменения цены
+                    RETURN QUERY SELECT 'duplicate'::TEXT, v_old_price, p_price, FALSE;
+                END IF;
+            END;
+            $$ LANGUAGE plpgsql;
+            """)
+
             # print("[DB] Таблица ads_cian создана успешно")  # Убрано из лога
-            
+
             # Создаем схему system если её нет
             await conn.execute("CREATE SCHEMA IF NOT EXISTS system")
             
@@ -128,7 +222,17 @@ def _should_mark_as_processed(address: str, geo_labels: list = None) -> bool:
     return False
 
 async def save_cian_ad(ad_data: Dict) -> bool:
-    """Сохраняет объявление CIAN в БД. Возвращает True, если добавлено, False если дубликат."""
+    """
+    Сохраняет объявление CIAN в БД.
+
+    Возвращает:
+        True - если объявление добавлено как новое ИЛИ если цена изменилась
+        False - если дубликат без изменения цены
+
+    При дубликате:
+        - Если цена изменилась: обновляет все поля и устанавливает processed=FALSE
+        - Если цена не изменилась: обновляет все поля кроме processed
+    """
     pool = await _get_cian_pool()
     async with pool.acquire() as conn:
         try:
@@ -295,17 +399,7 @@ async def save_cian_ad(ad_data: Dict) -> bool:
             else:
                 # Обычная московская карточка - всегда помечаем как необработанную
                 should_mark_processed = False
-            
-            # Вставляем данные
-            query = """
-            INSERT INTO ads_cian (
-                url, avitoid, price, rooms, area, floor, total_floors, 
-                complex, metro_id, min_metro, address, district_id, tags, person_type, person, object_type_id, source_created, processed
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-            ON CONFLICT (avitoid) DO UPDATE SET
-                processed = EXCLUDED.processed
-            """
-            
+
             # Нормализуем source_created (ожидается datetime для TIMESTAMP)
             created_value = ad_data.get('created_dt')
             if isinstance(created_value, str):
@@ -324,7 +418,10 @@ async def save_cian_ad(ad_data: Dict) -> bool:
                 complex_name = re.sub(r'[»"]$', '', complex_name)  # Убираем кавычки в конце
                 complex_name = complex_name.strip()  # Убираем лишние пробелы
 
-            result = await conn.execute(query,
+            # Вызываем хранимую процедуру
+            result = await conn.fetchrow("""
+                SELECT * FROM upsert_cian_ad($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            """,
                 ad_data.get('URL'),
                 avitoid,
                 price,
@@ -336,7 +433,7 @@ async def save_cian_ad(ad_data: Dict) -> bool:
                 metro_id,
                 min_metro,
                 address,
-                district_id,  # district_id
+                district_id,
                 tags,
                 person_type,
                 person,
@@ -344,14 +441,21 @@ async def save_cian_ad(ad_data: Dict) -> bool:
                 created_value,
                 should_mark_processed
             )
-            
-            # Проверяем, была ли запись добавлена
-            if "INSERT 0 1" in result:
-                print(f"[DB] Добавлено объявление {avitoid}: {ad_data.get('URL')}")
+
+            # Обрабатываем результат от хранимой процедуры
+            operation_type = result['operation_type']
+            old_price_val = result['old_price']
+            new_price_val = result['new_price']
+            is_new = result['is_new_record']
+
+            if operation_type == 'inserted':
+                print(f"[DB] ➕ Добавлено объявление {avitoid}: {ad_data.get('URL')}")
                 return True
-            else:
-                # Запись уже существует - не обновляем поле processed
-                print(f"[DB] Пропущено (дубликат) объявление {avitoid}: {ad_data.get('URL')}")
+            elif operation_type == 'updated':
+                print(f"[DB] 💰 Обновлена цена объявления {avitoid}: {old_price_val} → {new_price_val} (processed=FALSE)")
+                return True
+            else:  # duplicate
+                print(f"[DB] 🔄 Пропущено (дубликат без изменений) объявление {avitoid}")
                 return False
             
         except Exception as e:
