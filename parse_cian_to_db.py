@@ -42,32 +42,7 @@ import time
 from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 
-# Определяем какую библиотеку использовать для обхода Cloudflare
-USE_CURL_CFFI = False
-USE_CLOUDSCRAPER = False
-scraper = None
-
-try:
-    from curl_cffi import requests
-    USE_CURL_CFFI = True
-    print("[INFO] Используется curl_cffi для обхода Cloudflare")
-except ImportError:
-    try:
-        import cloudscraper
-        import requests
-        USE_CLOUDSCRAPER = True
-        scraper = cloudscraper.create_scraper(
-            browser={
-                'browser': 'chrome',
-                'platform': 'linux',
-                'desktop': True
-            }
-        )
-        print("[INFO] Используется cloudscraper для обхода Cloudflare")
-    except ImportError:
-        import requests
-        print("[WARNING] curl_cffi и cloudscraper не установлены, используется обычный requests")
-        print("[WARNING] Установите: pip install curl_cffi  или  pip install cloudscraper")
+from cian_http_client import DEFAULT_CIAN_HEADERS, fetch_cian_page
 
 # Импортируем функции работы с БД
 from parse_todb import (
@@ -177,19 +152,7 @@ FOOT_MIN = 15  # Время в пути до метро в минутах (на�
 # 
 # URL будет: https://www.cian.ru/cat.php?deal_type=sale&engine_version=2&foot_min=20&metro%5B0%5D=68&offer_type=flat&only_foot=2
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0',
-}
+HEADERS = DEFAULT_CIAN_HEADERS.copy()
 
 # Cookies для обхода блокировки (получены через cloudscraper на сервере)
 # Попробуйте сначала без cookies - прокси может работать и так
@@ -740,51 +703,14 @@ async def process_single_metro_station(
             page_url = f"{search_url}&p={page}"
             print(f"   📄 Страница {page}: {page_url}")
             
-            # Получаем страницу
-            if USE_CURL_CFFI:
-                # Используем curl_cffi с impersonate для обхода Cloudflare
-                session = requests.Session()
-
-                # Параметры запроса
-                request_params = {
-                    'headers': HEADERS,
-                    'timeout': 30,
-                    'impersonate': 'chrome124'  # Имитируем Chrome 124
-                }
-
-                if proxy:
-                    request_params['proxies'] = {'http': proxy, 'https': proxy}
-
-                if COOKIES:
-                    request_params['cookies'] = COOKIES
-
-                response = session.get(page_url, **request_params)
-
-            elif USE_CLOUDSCRAPER:
-                # Используем cloudscraper для обхода Cloudflare
-                request_params = {
-                    'headers': HEADERS,
-                    'timeout': 30
-                }
-
-                if proxy:
-                    request_params['proxies'] = {'http': proxy, 'https': proxy}
-
-                if COOKIES:
-                    scraper.cookies.update(COOKIES)
-
-                response = scraper.get(page_url, **request_params)
-
-            else:
-                # Обычный requests (может не работать с Cloudflare)
-                session = requests.Session()
-                if proxy:
-                    session.proxies = {'http': proxy, 'https': proxy}
-
-                if COOKIES:
-                    session.cookies.update(COOKIES)
-
-                response = session.get(page_url, headers=HEADERS, timeout=30)
+            # Получаем страницу с использованием унифицированного клиента
+            response = fetch_cian_page(
+                page_url,
+                headers=HEADERS,
+                cookies=COOKIES if COOKIES else None,
+                proxy=proxy,
+                timeout=30
+            )
 
             response.raise_for_status()
             

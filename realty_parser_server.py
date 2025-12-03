@@ -28,6 +28,8 @@ import signal
 import atexit
 from dotenv import load_dotenv
 
+from cian_http_client import fetch_cian_page
+
 # Загружаем переменные из .env файла
 load_dotenv()
 
@@ -587,8 +589,16 @@ class RealtyParserAPI:
             print(f"🏠 Парсим объявление Cian: {url}")
             
             # Получаем страницу
-            response = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self.session.get(url)
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: fetch_cian_page(
+                    url,
+                    headers=dict(self.session.headers),
+                    cookies=None,
+                    proxy=None,
+                    timeout=30
+                )
             )
             response.raise_for_status()
             
