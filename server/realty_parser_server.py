@@ -11,6 +11,7 @@ import os
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict
+import sys
 
 import aiohttp
 import psycopg2
@@ -21,6 +22,19 @@ from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 import uvicorn
 from dotenv import load_dotenv
+
+try:
+    import reportlab  # ensure real package loads before server/reportlab is imported
+except ImportError:
+    reportlab = None
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SERVER_DIR = Path(__file__).resolve().parent
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+DEFAULT_REPORT_OUTPUT_DIR = SERVER_DIR
 
 from models import (
     FlatReportRequest,
@@ -573,10 +587,12 @@ async def create_flat_report(request: FlatReportRequest):
         raise HTTPException(status_code=500, detail=f"Ошибка получения исходных данных: {exc}")
 
     timestamp_suffix = datetime.now().strftime("%Y%m%d%H%M%S")
-    output_path = request.output_path or os.path.join(
-        "/tmp",
-        f"flat_report_{report_values['house_id']}_{report_values['floor']}_{report_values['rooms']}_{timestamp_suffix}.pdf",
+    default_filename = (
+        f"flat_report_{report_values['house_id']}_{report_values['floor']}"
+        f"_{report_values['rooms']}_{timestamp_suffix}.pdf"
     )
+    default_output_path = (DEFAULT_REPORT_OUTPUT_DIR / default_filename).resolve()
+    output_path = request.output_path or str(default_output_path)
     output_dir = os.path.dirname(output_path)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
@@ -1179,7 +1195,7 @@ async def api_documentation():
             },
             "reports": {
                 "POST /api/reports/flat": {
-                    "description": "Генерация PDF-отчёта по user_flat; параметры берутся из users.user_flats, а при отсутствии house_id автоматически запускается подготовка",
+                    "description": "Генерация PDF-отчёта по user_flat; параметры берутся из users.user_flats, а при отсутствии house_id автоматически запускается подготовка. Отчёт по умолчанию сохраняется рядом с server/realty_parser_server.py.",
                     "body": {
                         "flat_id": 77,
                         "report_date": "2024-01-01 (опционально)",
@@ -1188,7 +1204,7 @@ async def api_documentation():
                     },
                     "response": {
                         "success": True,
-                        "pdf_path": "/tmp/flat_report_92207_7_2_20240101010101.pdf",
+                        "pdf_path": "server/flat_report_92207_7_2_20240101010101.pdf",
                         "message": "PDF-отчёт сформирован",
                         "file_size": 123456,
                         "params": {
@@ -1202,7 +1218,7 @@ async def api_documentation():
                             "analogs_floor_delta": 2,
                             "analogs_days_limit": 30,
                             "report_date": "2024-01-01",
-                            "output_path": "/tmp/flat_report_92207_7_2_20240101010101.pdf",
+                            "output_path": "server/flat_report_92207_7_2_20240101010101.pdf",
                             "regenerate": true
                         }
                     }

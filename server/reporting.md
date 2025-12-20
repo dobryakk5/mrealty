@@ -31,7 +31,7 @@ Endpoint: `POST /api/reports/flat`
 ```json
 {
   "success": true,
-  "pdf_path": "/tmp/flat_report_92207_7_2_20241218120000.pdf",
+  "pdf_path": "server/flat_report_92207_7_2_20241218120000.pdf",
   "file_size": 2912,
   "params": {
     "flat_id": 77,
@@ -44,7 +44,7 @@ Endpoint: `POST /api/reports/flat`
     "analogs_floor_delta": 2,
     "analogs_days_limit": 30,
     "report_date": null,
-    "output_path": "/tmp/flat_report_92207_7_2_20241218120000.pdf",
+    "output_path": "server/flat_report_92207_7_2_20241218120000.pdf",
     "regenerate": true
   },
   "message": "PDF-отчёт сформирован"
@@ -52,6 +52,7 @@ Endpoint: `POST /api/reports/flat`
 ```
 
 Чтобы сохранить файл в другом месте, передайте `output_path` (путь должен быть доступен процессу API).
+По умолчанию PDF сохраняется рядом с `server/realty_parser_server.py` (например, `server/flat_report_92207_7_2_20241218120000.pdf`).
 
 ### 3. CLI-скрипт
 
@@ -151,3 +152,12 @@ SELECT users.build_flat_report_analogs(123456789, 92207, 7, 2, 1500, 0.15, 2, 30
 ```
 
 Эти вызовы можно делать вручную, если нужно подготовить отчёт задолго до формирования PDF.
+
+
+cd /Users/pavellebedev/Desktop/pyton/realty/mrealty
+.venv/bin/python -m uvicorn server.realty_parser_server:app --reload --port 8008
+
+
+curl -X POST http://localhost:8008/api/reports/flat \
+  -H "Content-Type: application/json" \
+  -d '{"flat_id":77,"regenerate":true}'
