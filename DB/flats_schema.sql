@@ -1,0 +1,11 @@
+Schema overview
+
+users.user_flats stores each apartment that a Telegram user manages: surrogate id, tgUserId (FK to users.users), address, rooms, floor plus auto timestamps; there is an index on tg_user_id to fetch all flats per user quickly (schema.ts (lines 67-78)).
+users.ads keeps all ads tied to a flat via flatId, with mandatory data (url, address, price, rooms, views) plus parser-enriched fields (areas, floor info, amenities, photoUrls, source, boolean status, daily viewsToday, sourceCreated/Updated) and workflow flags from (0=my flat, 1=found automatically, 2=manual) and sma (0=base list, 1=in comparison); several indexes (ads_flat_id_idx, ads_address_idx, ads_price_idx, ads_sma_idx, ads_flat_sma_idx) support the common filters used by the API (schema.ts (lines 80-127)).
+users.ad_history records price/status snapshots per ad (adId, changed price, viewsToday, status, and timestamps) so scheduler/manual updates can track deltas (schema.ts (lines 130-142)).
+Drizzle relations link userFlats.ads, ads.flat/ads.history, and adHistory.ad, mirroring the FK relationships the API relies on when it joins flats with their live ads and change history (schema.ts (lines 144-159)).
+Stored procedures & helpers
+
+public.find_ads(address, floor, rooms) returns every listing that matches a given apartment, without deduplication, and is the source for the “По этой квартире” block; it is also used when a flat is created or refreshed (services/api calls) and is described in CLAUDE.md (lines 58-66) which lists its purpose and usage.
+public.find_house_ads(address, exclude_floor, exclude_rooms) retrieves distinct listings for the same building while filtering out the user’s own flat and prioritizing active/Cian/Yandex/recent entries; it drives the “По этому дому” checks (CLAUDE.md (lines 63-68)).
+public.find_nearby_apartments(address, rooms, max_price, min_area, min_kitchen_area, radius) finds competing listings within ~500 m based on price, room count, and areas. The SQL implementation fetches the house via get_house_id_by_address, constrains rooms/price, joins flats_history, applies area filters, orders by source priority, and limits results to 20 (CLAUDE.md (lines 69-73), find.sql (lines 1-73)). The helper public.get_house_near_house computes nearby houses through spatial distance and feeds find_nearby_apartments (find.sql (lines 46-80)).
