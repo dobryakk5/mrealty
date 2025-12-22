@@ -157,7 +157,34 @@ SELECT users.build_flat_report_analogs(123456789, 92207, 7, 2, 1500, 0.15, 2, 30
 cd /Users/pavellebedev/Desktop/pyton/realty/mrealty
 .venv/bin/python -m uvicorn server.realty_parser_server:app --reload --port 8008
 
+curl -X POST http://localhost:8008/api/reports/prepare \
+  -H "Content-Type: application/json" \
+  -d '{"flat_id":77, "run_parser":true, "max_history":3, "max_nearby":20, "radius_m":1000}'
 
 curl -X POST http://localhost:8008/api/reports/flat \
   -H "Content-Type: application/json" \
   -d '{"flat_id":77,"regenerate":true}'
+
+### 9. Генерация PDF документации
+
+Файл `server/build_reporting_pdf.py` переводит `server/reporting.md` в PDF и кладёт его рядом с серверными ресурсами (`server/Аналитика (оценка вторички).pdf`). Скрипт использует те же шрифты, что и основной генератор отчётов, и опирается на `markdown` + `bs4` для простого форматирования.
+
+```bash
+python server/build_reporting_pdf.py
+```
+
+Параметры:
+
+- `--input` (`-i`) — путь к Markdown-файлу (по умолчанию `server/reporting.md`).
+- `--output` (`-o`) — итоговый PDF (по умолчанию `server/Аналитика (оценка вторички).pdf`).
+
+Если вы вносите изменения в `reporting.md`, запустите скрипт заново, чтобы обновить PDF‑копию. Убедитесь, что в окружении установлены зависимости: `pip install reportlab markdown beautifulsoup4`.
+
+### 10. AI-комментарии к таблицам
+
+PDF теперь снабжается краткими выводами рядом с таблицами (`Объект`, `Рынок и позиционирование`, `Топ конкурентов`). Комментарии формируются через OpenRouter (модель по умолчанию `nex-agi/deepseek-v3.1-nex-n1:free`) и берутся из `server/report_ai_commentary.py`. Чтобы текст генерировался автоматически:
+
+- Задайте `OPENROUTER_API_KEY` в окружении (такой же ключ, что используется для остальных ботов).
+- При необходимости поменяйте модель с помощью `OPENROUTER_MODEL` и добавьте запасной через `OPENROUTER_FALLBACK_MODEL`.
+
+Если ключа нет, комментарии заменяются простыми описаниями (функция `server/report_ai_commentary.py` сама умеет создавать fallback). Отдельных действий для чтения PDF не требуется, всё происходит во время вызова `build_flat_report_pdf`.

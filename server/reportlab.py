@@ -17,6 +17,14 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
+# При загрузке через spec_from_file_location нет пакета server.*, поэтому пробуем оба варианта.
+try:
+    from .formatting import fmt_money as _fmt_money, fmt_num as _fmt_num  # type: ignore
+    from .report_ai_commentary import ReportAICommentary  # type: ignore
+except Exception:  # pragma: no cover - fallback for direct import
+    from server.formatting import fmt_money as _fmt_money, fmt_num as _fmt_num  # type: ignore
+    from server.report_ai_commentary import ReportAICommentary  # type: ignore
+
 
 def fetch_latest_report_json(
     dsn: str,
@@ -60,26 +68,6 @@ def fetch_latest_report_json(
             raise ValueError("Отчёт не найден в users.flat_reports по заданным ключам.")
         return row["report_json"]
 
-
-def _fmt_money(v: Any) -> str:
-    if v is None:
-        return "—"
-    try:
-        return f"{int(v):,}".replace(",", " ")
-    except Exception:
-        return str(v)
-
-
-def _fmt_num(v: Any, digits: int = 0) -> str:
-    if v is None:
-        return "—"
-    try:
-        x = float(v)
-        if digits == 0:
-            return f"{int(round(x)):,}".replace(",", " ")
-        return f"{x:.{digits}f}"
-    except Exception:
-        return str(v)
 
 
 # Настройка шрифтов ---------------------------------------------------------
@@ -178,6 +166,33 @@ def build_flat_report_pdf(
     else:
         report = report_json
 
+    def _fmt_text(value: Any) -> str:
+        if value is None or value == "":
+            return "—"
+        if isinstance(value, bool):
+            return "да" if value else "нет"
+        if isinstance(value, (list, tuple)):
+            joined = ", ".join(str(v) for v in value if v is not None)
+            return joined or "—"
+        return str(value)
+
+    def _fmt_floor_pair(floor: Any, total: Any) -> str:
+        if floor is None and total is None:
+            return "—"
+        if total is None:
+            return _fmt_num(floor, 0)
+        if floor is None:
+            return f"—/{_fmt_num(total, 0)}"
+        return f"{_fmt_num(floor, 0)}/{_fmt_num(total, 0)}"
+
+    def _short_url(value: Any, limit: int = 40) -> str:
+        if not value:
+            return "—"
+        text = str(value)
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1] + "…"
+
     styles = getSampleStyleSheet()
     style_h = styles["Heading1"]
     style_h2 = styles["Heading2"]
@@ -245,7 +260,16 @@ def build_flat_report_pdf(
             ]
         )
     )
+    ai_commentary = ReportAICommentary()
+
     story.append(subj_table)
+    story.append(Spacer(1, 3 * mm))
+    story.append(
+        Paragraph(
+            f"<b>Комментарий:</b> {ai_commentary.subject_commentary(subject, meta)}",
+            style_p,
+        )
+    )
     story.append(Spacer(1, 6 * mm))
 
     # 2) Рынок
@@ -278,6 +302,13 @@ def build_flat_report_pdf(
         )
     )
     story.append(market_table)
+    story.append(Spacer(1, 3 * mm))
+    story.append(
+        Paragraph(
+            f"<b>Комментарий:</b> {ai_commentary.market_commentary(market)}",
+            style_p,
+        )
+    )
     story.append(Spacer(1, 6 * mm))
 
     # 3) Топ конкурентов
@@ -310,6 +341,83 @@ def build_flat_report_pdf(
             )
         )
         story.append(t)
+
+    story.append(Spacer(1, 3 * mm))
+    story.append(
+        Paragraph(
+            f"<b>Комментарий:</b> {ai_commentary.competitors_commentary(top, subject)}",
+            style_p,
+        )
+    )
+
+    top_for_matrix = top[:5]
+    if top_for_matrix:
+        story.append(PageBreak())
+        story.append(Paragraph("4. Сравнение 5 конкурентов", style_h2))
+        story.append(
+            Paragraph(
+                "Детализация ключевых параметров по 5 ближайшим аналогам (колонки) и оцениваемому лоту.",
+                style_p,
+            )
+        )
+        story.append(Spacer(1, 3 * mm))
+
+        columns = [("Оцениваемый лот", subject)] + [
+            (f"Аналог {idx + 1}", item) for idx, item in enumerate(top_for_matrix)
+        ]
+
+        field_rows: Sequence[tuple[str, Any]] = [
+            ("Цена, ₽", lambda item: _fmt_money(item.get("price"))),
+            ("Цена за м², ₽/м²", lambda item: _fmt_num(item.get("ppm"), 0)),
+            ("Площадь, м²", lambda item: _fmt_num(item.get("area_m2"), 2)),
+            ("Кухня, м²", lambda item: _fmt_num(item.get("kitchen_area"), 2)),
+            ("Жилая, м²", lambda item: _fmt_num(item.get("living_area"), 2)),
+            ("Комнат", lambda item: _fmt_num(item.get("rooms"), 0)),
+            ("Этаж/этажность", lambda item: _fmt_floor_pair(item.get("floor"), item.get("total_floors"))),
+            ("Год постройки", lambda item: _fmt_num(item.get("construction_year"), 0)),
+            ("Высота потолка, м", lambda item: _fmt_num(item.get("ceiling_height"), 2)),
+            ("Отделка", lambda item: _fmt_text(item.get("renovation"))),
+            ("Балкон/лоджия", lambda item: _fmt_text(item.get("balcony"))),
+            ("Мебель", lambda item: _fmt_text(item.get("furniture"))),
+            ("Тип дома", lambda item: _fmt_text(item.get("house_type"))),
+            ("Расстояние до объекта, м", lambda item: _fmt_num(item.get("dist_m"), 0)),
+            ("Метро", lambda item: _fmt_text(item.get("metro_station"))),
+            ("До метро, мин", lambda item: _fmt_num(item.get("metro_time"), 0)),
+            ("URL", lambda item: _short_url(item.get("url"))),
+        ]
+
+        header = ["Параметр"] + [title for title, _ in columns]
+        table_data = [header]
+        for label, getter in field_rows:
+            row = [label]
+            for _, data in columns:
+                try:
+                    row.append(getter(data))
+                except Exception:
+                    row.append("—")
+            table_data.append(row)
+
+        table_width = doc.pagesize[0] - doc.leftMargin - doc.rightMargin
+        label_width = 48 * mm
+        value_columns = len(columns)
+        remaining_width = max(table_width - label_width, 60 * mm)
+        value_width = remaining_width / max(value_columns, 1)
+        col_widths = [label_width] + [value_width] * value_columns
+
+        detailed_table = Table(table_data, colWidths=col_widths, hAlign="LEFT", repeatRows=1)
+        detailed_table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ("FONTNAME", (0, 0), (-1, -1), _FONT_REGULAR_NAME),
+                    ("FONTNAME", (0, 0), (-1, 0), _FONT_BOLD_NAME),
+                ]
+            )
+        )
+        story.append(detailed_table)
 
     doc.build(story)
     return output_pdf_path
