@@ -27,10 +27,17 @@ async def _get_cian_pool() -> asyncpg.Pool:
     return _cian_db_pool
 
 
+async def _table_exists(conn: asyncpg.Connection, table_name: str) -> bool:
+    """Проверяет существование таблицы в текущем search_path или по полному имени."""
+    regclass = await conn.fetchval("SELECT to_regclass($1)", table_name)
+    return regclass is not None
+
+
 async def create_ads_cian_table() -> None:
     """Создает таблицу ads_cian для хранения объявлений с CIAN и хранимую процедуру для сохранения"""
     pool = await _get_cian_pool()
     async with pool.acquire() as conn:
+        table_exists = await _table_exists(conn, "ads_cian")
         try:
             await conn.execute("""
             CREATE TABLE IF NOT EXISTS ads_cian (
@@ -187,6 +194,10 @@ async def create_ads_cian_table() -> None:
                 print(f"[DB] Предупреждение: не удалось выполнить миграцию существующих записей: {e}")
                 
         except Exception as e:
+            err_str = str(e).lower()
+            if "must be owner of table ads_cian" in err_str and table_exists:
+                print("[DB] Таблица ads_cian уже существует и принадлежит другому пользователю — пропускаем создание")
+                return
             print(f"[DB] Ошибка создания таблицы ads_cian: {e}")
             raise
 
