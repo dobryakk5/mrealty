@@ -114,8 +114,8 @@ async def main() -> None:
         "-b",
         "--batch-size",
         type=int,
-        default=1000,
-        help="Number of rows per batch (default: 1000).",
+        default=19000,
+        help="Number of rows per batch (default: 19000).",
     )
     parser.add_argument(
         "--start-offset",

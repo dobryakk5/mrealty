@@ -42,7 +42,7 @@ import time
 from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 
-from cian_http_client import DEFAULT_CIAN_HEADERS, fetch_cian_page
+from server.cian_http_client import DEFAULT_CIAN_HEADERS, fetch_cian_page
 
 # Импортируем функции работы с БД
 from parse_todb import (

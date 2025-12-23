@@ -109,6 +109,19 @@ LIMIT 1;
 4. Вызываем `public.find_nearby_apartments(address, rooms, current_price, area, kitchen_area, radius)` и добавляем результат в `users.ads` с `ads.from=2`, чтобы собрать конкурентов из окрестностей.
 5. По каждому URL (если он ведёт на Cian) последовательно делаем `GET /api/parse/ext?url=...` в пределах вашего FastAPI (`REPORT_PARSER_BASE_URL`, по умолчанию `http://localhost:8008`). Это тот же расширенный парсер, но без адреса и фото, чтобы запросы были легче; ответ применяем к `users.ads`, пополняя поля цены, площади, этажа и статуса, чтобы `users.build_flat_report*` получил самые свежие данные.
 
+
+2. Рынок и позиционирование
+Эти строки — поле market из функции users.build_flat_report_analogs (или build_flat_report в старой версии):
+Конкурентов учтено — COUNT(*) по выборке конкурентов (users.ads в радиусе, с rooms=p_rooms, фильтрами по этажу/площади, без самого лота, сортировка/дедуп по URL).
+P25/P50/P75 (₽/м²) — перцентили 0.75) по ppm = price / area_m2 конкурентов, где area_m2 берётся из total_area→living_area. Если конкурент один, все три равны его ppm.
+Позиция (0..1) — доля конкурентов, у которых ppm <= ppm субъекта: COUNT(comps ppm<=subject_ppm) / COUNT(comps). При одном аналоге и более низкой цене лота будет 0.0; если цена выше — ближе к 1. Если ppm лота неизвестен — NULL.
+Вердикт — в build_flat_report_analogs:
+overpriced, если subject_ppm > P75,
+underpriced, если subject_ppm < P25,
+иначе in_market; при нехватке данных — insufficient_data.
+В простом build_flat_report поле verdict не ставится.
+
+
 > Если FastAPI слушает на другом адресе, настройте `REPORT_PARSER_BASE_URL` в `.env`, чтобы pipeline знал, куда шлать запросы.
 
 Эту подготовку можно запускать вручную через `POST /api/reports/prepare` с `flat_id` + необязательными настройками `radius_m`, `max_history`, `max_nearby`, `run_parser`. Результат содержит `result.history_ads`, `result.nearby_ads`, `result.persisted_ads` и список успешно распарсенных ссылок.
