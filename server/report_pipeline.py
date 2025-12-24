@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -14,6 +15,7 @@ from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
 from models import PropertyData
+from history_sync import PublicHistoryMeta, sync_ad_to_public_history
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +178,9 @@ class ReportPipeline:
                     updated = self._apply_property_data(cur, meta, item["id"], property_data)
                     if updated:
                         parser_result["parsed"].append(url)
+
+            if persisted:
+                self._sync_public_history(cur, [item["id"] for item in persisted if item.get("id")])
 
             conn.commit()
 
@@ -508,6 +513,40 @@ class ReportPipeline:
         set_clause = ", ".join(f'"{col}" = %s' for col in columns)
         cursor.execute(f"UPDATE users.ads SET {set_clause} WHERE id = %s", (*values, ad_id))
         return cursor.rowcount > 0
+
+    def _fetch_ads_by_ids(self, cursor: RealDictCursor, ids: Sequence[int]) -> List[Dict[str, Any]]:
+        if not ids:
+            return []
+        cursor.execute(
+            """
+            SELECT
+              id, url, price, status,
+              house_id, floor, rooms, address, description,
+              created_at, updated_at
+            FROM users.ads
+            WHERE id = ANY(%s)
+            """,
+            (list(ids),),
+        )
+        return cursor.fetchall()
+
+    def _sync_public_history(self, cursor: RealDictCursor, ad_ids: Sequence[int]) -> None:
+        rows = self._fetch_ads_by_ids(cursor, ad_ids)
+        if not rows:
+            return
+        meta = PublicHistoryMeta(cursor)
+        for row in rows:
+            snapshot = dict(row)
+            status_value = row.get("status")
+            if status_value is None:
+                status_value = row.get("is_actual")
+            snapshot["status"] = status_value
+            sync_ad_to_public_history(
+                cursor,
+                snapshot,
+                meta=meta,
+                timestamp=row.get("updated_at") or datetime.utcnow(),
+            )
 
     @staticmethod
     def _to_decimal(value: Any) -> Optional[Decimal]:

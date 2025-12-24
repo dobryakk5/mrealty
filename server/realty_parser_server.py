@@ -57,6 +57,7 @@ from parser_service import (
     parser,
 )
 from report_pipeline import ReportPipeline
+from history_sync import PublicHistoryMeta, sync_ad_to_public_history
 
 
 class HistoryTableMeta:
@@ -701,7 +702,14 @@ async def prepare_report_data(request: ReportPreparationRequest):
 def _fetch_active_ads(dsn: str) -> list[dict[str, Any]]:
     with psycopg2.connect(dsn) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
-            "SELECT id, url, price, status, views_today FROM users.ads WHERE status = TRUE AND url IS NOT NULL"
+            """
+            SELECT
+              id, url, price, status, views_today,
+              house_id, floor, rooms, address, description,
+              created_at, updated_at
+            FROM users.ads
+            WHERE status = TRUE AND url IS NOT NULL
+            """
         )
         return cur.fetchall()
 
@@ -738,7 +746,10 @@ def _detect_ad_change(ad: dict[str, Any], parsed: dict[str, Any]) -> dict[str, A
     old_price = _to_decimal(ad.get("price"))
     price_changed = new_price is not None and old_price != new_price
     status_value = parsed.get("status")
-    status_changed = status_value is not None and bool(status_value) != bool(ad.get("status"))
+    old_status_raw = ad.get("status")
+    if old_status_raw is None:
+        old_status_raw = ad.get("is_actual")
+    status_changed = status_value is not None and bool(status_value) != bool(old_status_raw)
 
     if not price_changed and not status_changed:
         return None
@@ -746,6 +757,13 @@ def _detect_ad_change(ad: dict[str, Any], parsed: dict[str, Any]) -> dict[str, A
     change: dict[str, Any] = {
         "ad_id": ad["id"],
         "url": ad["url"],
+        "house_id": ad.get("house_id"),
+        "floor": ad.get("floor"),
+        "rooms": ad.get("rooms"),
+        "address": ad.get("address"),
+        "description": ad.get("description"),
+        "old_price": old_price,
+        "old_status": bool(old_status_raw),
         "checked_at": datetime.utcnow(),
         "views_today": _to_int(parsed.get("views_today")),
         "price_changed": price_changed,
@@ -759,7 +777,7 @@ def _detect_ad_change(ad: dict[str, Any], parsed: dict[str, Any]) -> dict[str, A
 
 def _persist_flats_state_changes(dsn: str, changes: list[dict[str, Any]]) -> None:
     with psycopg2.connect(dsn) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-        history_meta = HistoryTableMeta(cur)
+        public_meta = PublicHistoryMeta(cur)
         for change in changes:
             set_fields: list[str] = []
             set_values: list[Any] = []
@@ -767,8 +785,11 @@ def _persist_flats_state_changes(dsn: str, changes: list[dict[str, Any]]) -> Non
                 set_fields.append("price")
                 set_values.append(change["price"])
             if change.get("status") is not None:
+                status_bool = bool(change["status"])
                 set_fields.append("status")
-                set_values.append(change["status"])
+                set_values.append(status_bool)
+                set_fields.append("is_actual")
+                set_values.append(1 if status_bool else 0)
             if change.get("views_today") is not None:
                 set_fields.append("views_today")
                 set_values.append(change["views_today"])
@@ -784,23 +805,23 @@ def _persist_flats_state_changes(dsn: str, changes: list[dict[str, Any]]) -> Non
                     (*set_values, change["ad_id"]),
                 )
 
-            history_payload = {
-                "ad_id": change["ad_id"],
-                "price": change.get("price"),
-                "status": change.get("status"),
-                "views_today": change.get("views_today"),
-                "created_at": change["checked_at"],
+            target_price = change.get("price")
+            if target_price is None:
+                target_price = change.get("old_price")
+            target_status = change.get("status")
+            if target_status is None:
+                target_status = change.get("old_status")
+            ad_snapshot = {
+                "url": change.get("url"),
+                "house_id": change.get("house_id"),
+                "floor": change.get("floor"),
+                "rooms": change.get("rooms"),
+                "address": change.get("address"),
+                "description": change.get("description"),
+                "price": target_price,
+                "status": target_status,
             }
-            columns, values = history_meta.build_columns(history_payload)
-            if not columns:
-                continue
-            insert_stmt = sql.SQL(
-                "INSERT INTO users.ad_history ({cols}) VALUES ({vals})"
-            ).format(
-                cols=sql.SQL(", ").join(sql.Identifier(col) for col in columns),
-                vals=sql.SQL(", ").join(sql.Placeholder() for _ in columns),
-            )
-            cur.execute(insert_stmt, values)
+            sync_ad_to_public_history(cur, ad_snapshot, meta=public_meta, timestamp=change["checked_at"])
         conn.commit()
 
 

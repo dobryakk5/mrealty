@@ -15,7 +15,11 @@ class ReportAICommentary:
     def __init__(self, enabled: bool | None = None) -> None:
         toggle = enabled
         if toggle is None:
-            toggle = os.getenv("REPORT_AI_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+            env_value = os.getenv("REPORT_AI_ENABLED")
+            if env_value is None:
+                toggle = True  # включаем ИИ по умолчанию, если переменная не задана
+            else:
+                toggle = env_value.lower() in {"1", "true", "yes", "on"}
         if toggle:
             try:
                 self._generator = BaseAIContentGenerator()
@@ -47,6 +51,23 @@ class ReportAICommentary:
             return "Нет данных по конкурентам."
         prompt = self._build_competitors_prompt(competitors[:3], subject or {})
         fallback = self._competitors_fallback(competitors[:3])
+        return self._query_ai(prompt, fallback)
+
+    def comparison_commentary(
+        self,
+        subject: Mapping[str, Any] | None,
+        analogs: Sequence[Mapping[str, Any]] | None,
+    ) -> str:
+        prompt = self._build_comparison_prompt(subject or {}, analogs or [])
+        fallback = self._comparison_fallback(subject or {}, analogs or [])
+        return self._query_ai(prompt, fallback)
+
+    def history_commentary(
+        self,
+        history_sources: Sequence[tuple[str, Sequence[tuple[str, float]]]] | None,
+    ) -> str:
+        prompt = self._build_history_prompt(history_sources or [])
+        fallback = self._history_fallback(history_sources or [])
         return self._query_ai(prompt, fallback)
 
     def _query_ai(self, prompt: str, fallback: str) -> str:
@@ -160,3 +181,62 @@ class ReportAICommentary:
             )
         summary = "; ".join(descriptions)
         return f"Топ-конкуренты: {summary}."
+
+    def _build_comparison_prompt(
+        self, subject: Mapping[str, Any], analogs: Sequence[Mapping[str, Any]]
+    ) -> str:
+        subject_line = (
+            f"Оцениваемый лот: цена {fmt_money(subject.get('price'))} ₽, "
+            f"{fmt_num(subject.get('ppm'), 0)} ₽/м², площадь {fmt_num(subject.get('area_m2'), 2)} м²."
+        )
+        analog_lines: list[str] = []
+        for idx, analog in enumerate(analogs[:5], start=1):
+            analog_lines.append(
+                f"{idx}. {fmt_money(analog.get('price'))} ₽, {fmt_num(analog.get('ppm'), 0)} ₽/м², "
+                f"площадь {fmt_num(analog.get('area_m2'), 2)} м², расстояние {fmt_num(analog.get('dist_m'), 0)} м"
+            )
+        return (
+            "Сравни оцениваемый лот с аналогами и дай лаконичный вывод по тому, "
+            "насколько текущая цена выглядит конкурентной. Сделай 2-3 предложения с упором на цену за м², "
+            "разброс цен аналогов и то, что можно скорректировать для ускорения сделки.\n"
+            + subject_line
+            + ("\nАналоги:\n" + "\n".join(analog_lines) if analog_lines else "\nАналоги: нет данных.")
+        )
+
+    def _comparison_fallback(
+        self, subject: Mapping[str, Any], analogs: Sequence[Mapping[str, Any]]
+    ) -> str:
+        if not analogs:
+            return "Нет аналогов для сравнения."
+        prices = [fmt_money(a.get("price")) for a in analogs[:3]]
+        ppms = [fmt_num(a.get("ppm"), 0) for a in analogs[:3]]
+        return (
+            "Сравнение: текущая цена "
+            f"{fmt_money(subject.get('price'))} ₽ ({fmt_num(subject.get('ppm'), 0)} ₽/м²), "
+            f"аналогов цены: {', '.join(prices)}, ₽/м²: {', '.join(ppms)}."
+        )
+
+    def _build_history_prompt(
+        self, history_sources: Sequence[tuple[str, Sequence[tuple[str, float]]]]
+    ) -> str:
+        lines: list[str] = []
+        for label, events in history_sources[:6]:
+            if not events:
+                lines.append(f"{label}: нет истории.")
+                continue
+            parts = [f"{date}: {fmt_money(price)} ₽" for date, price in events[:4]]
+            lines.append(f"{label}: " + "; ".join(parts))
+        return (
+            "Коротко опиши динамику цен: кто снижал или повышал стоимость и "
+            "как это влияет на ожидания по оцениваемому лоту. 2-3 предложения.\n"
+            + "\n".join(lines)
+        )
+
+    def _history_fallback(
+        self, history_sources: Sequence[tuple[str, Sequence[tuple[str, float]]]]
+    ) -> str:
+        total_events = sum(len(events) for _, events in history_sources)
+        if total_events == 0:
+            return "История цен отсутствует."
+        labels_with_data = [label for label, events in history_sources if events]
+        return f"История есть по: {', '.join(labels_with_data)}."

@@ -41,6 +41,8 @@ DECLARE
   v_pos numeric;
 
   v_top_items jsonb;
+  v_price_history_subject jsonb;
+  v_price_history_comp jsonb;
 
   v_report_type text := 'near_rooms';
   v_params jsonb := '{}'::jsonb;
@@ -284,18 +286,76 @@ BEGIN
       ORDER BY ppm ASC NULLS LAST, price ASC
       LIMIT 20
     ) t
+  ),
+  tracked_keys AS (
+    SELECT p_house_id AS house_id, p_floor AS floor, p_rooms AS rooms
+    UNION
+    SELECT DISTINCT house_id, floor, rooms FROM comps
+  ),
+  price_history AS (
+    SELECT
+      tk.house_id,
+      tk.floor,
+      tk.rooms,
+      COALESCE(
+        jsonb_agg(
+          jsonb_build_object(
+            'ts', t.ts,
+            'price', t.price
+          )
+          ORDER BY t.ts DESC
+        ) FILTER (WHERE t.ts IS NOT NULL),
+        '[]'::jsonb
+      ) AS history
+    FROM tracked_keys tk
+    LEFT JOIN LATERAL (
+      SELECT fh.time_source_updated AS ts, fh.price
+      FROM public.flats_history fh
+      WHERE fh.house_id = tk.house_id
+        AND fh.floor = tk.floor
+        AND fh.rooms = tk.rooms
+        AND fh.price IS NOT NULL
+      UNION ALL
+      SELECT fc.updated AS ts, fc.price
+      FROM public.flats_changes fc
+      JOIN public.flats_history fh ON fh.id = fc.flats_history_id
+      WHERE fh.house_id = tk.house_id
+        AND fh.floor = tk.floor
+        AND fh.rooms = tk.rooms
+        AND fc.price IS NOT NULL
+    ) t ON TRUE
+    GROUP BY tk.house_id, tk.floor, tk.rooms
   )
   SELECT
     s.cnt, s.p25_ppm, s.p50_ppm, s.p75_ppm,
     p.position01,
-    ti.items
+    ti.items,
+    ph_subject.history AS price_hist_subject,
+    (
+      SELECT COALESCE(jsonb_agg(
+        jsonb_build_object(
+          'house_id', ph.house_id,
+          'floor', ph.floor,
+          'rooms', ph.rooms,
+          'history', ph.history
+        )
+      ), '[]'::jsonb)
+      FROM price_history ph
+      WHERE NOT (ph.house_id = p_house_id AND ph.floor = p_floor AND ph.rooms = p_rooms)
+    ) AS price_hist_comp
   INTO
     v_cnt, v_p25_ppm, v_p50_ppm, v_p75_ppm,
     v_pos,
-    v_top_items
+    v_top_items,
+    v_price_history_subject,
+    v_price_history_comp
   FROM stats s
   CROSS JOIN pos p
-  CROSS JOIN top_items ti;
+  CROSS JOIN top_items ti
+  LEFT JOIN price_history ph_subject
+    ON ph_subject.house_id = p_house_id
+   AND ph_subject.floor = p_floor
+   AND ph_subject.rooms = p_rooms;
 
   v_report :=
     jsonb_build_object(
@@ -335,7 +395,11 @@ BEGIN
         'ppm_p75', v_p75_ppm,
         'position01', v_pos
       ),
-      'top_competitors', v_top_items
+      'top_competitors', v_top_items,
+      'price_history', jsonb_build_object(
+        'subject', v_price_history_subject,
+        'competitors', COALESCE(v_price_history_comp, '[]'::jsonb)
+      )
     );
 
   INSERT INTO users.flat_reports (
@@ -400,6 +464,8 @@ DECLARE
 
   v_params jsonb;
   v_top_items jsonb;
+  v_price_history_subject jsonb;
+  v_price_history_comp jsonb;
 BEGIN
   v_params := jsonb_build_object(
     'area_pct', p_area_pct,
@@ -659,18 +725,76 @@ BEGIN
       ORDER BY ppm ASC NULLS LAST, price ASC
       LIMIT GREATEST(1, LEAST(p_limit_top, 200))
     ) t
+  ),
+  tracked_keys AS (
+    SELECT p_house_id AS house_id, p_floor AS floor, p_rooms AS rooms
+    UNION
+    SELECT DISTINCT house_id, floor, rooms FROM comps
+  ),
+  price_history AS (
+    SELECT
+      tk.house_id,
+      tk.floor,
+      tk.rooms,
+      COALESCE(
+        jsonb_agg(
+          jsonb_build_object(
+            'ts', t.ts,
+            'price', t.price
+          )
+          ORDER BY t.ts DESC
+        ) FILTER (WHERE t.ts IS NOT NULL),
+        '[]'::jsonb
+      ) AS history
+    FROM tracked_keys tk
+    LEFT JOIN LATERAL (
+      SELECT fh.time_source_updated AS ts, fh.price
+      FROM public.flats_history fh
+      WHERE fh.house_id = tk.house_id
+        AND fh.floor = tk.floor
+        AND fh.rooms = tk.rooms
+        AND fh.price IS NOT NULL
+      UNION ALL
+      SELECT fc.updated AS ts, fc.price
+      FROM public.flats_changes fc
+      JOIN public.flats_history fh ON fh.id = fc.flats_history_id
+      WHERE fh.house_id = tk.house_id
+        AND fh.floor = tk.floor
+        AND fh.rooms = tk.rooms
+        AND fc.price IS NOT NULL
+    ) t ON TRUE
+    GROUP BY tk.house_id, tk.floor, tk.rooms
   )
   SELECT
     s.cnt, s.p25_ppm, s.p50_ppm, s.p75_ppm,
     p.position01,
-    ti.items
+    ti.items,
+    ph_subject.history AS price_hist_subject,
+    (
+      SELECT COALESCE(jsonb_agg(
+        jsonb_build_object(
+          'house_id', ph.house_id,
+          'floor', ph.floor,
+          'rooms', ph.rooms,
+          'history', ph.history
+        )
+      ), '[]'::jsonb)
+      FROM price_history ph
+      WHERE NOT (ph.house_id = p_house_id AND ph.floor = p_floor AND ph.rooms = p_rooms)
+    ) AS price_hist_comp
   INTO
     v_cnt, v_p25_ppm, v_p50_ppm, v_p75_ppm,
     v_pos,
-    v_top_items
+    v_top_items,
+    v_price_history_subject,
+    v_price_history_comp
   FROM stats s
   CROSS JOIN pos p
-  CROSS JOIN top_items ti;
+  CROSS JOIN top_items ti
+  LEFT JOIN price_history ph_subject
+    ON ph_subject.house_id = p_house_id
+   AND ph_subject.floor = p_floor
+   AND ph_subject.rooms = p_rooms;
 
   v_report :=
     jsonb_build_object(
@@ -717,7 +841,11 @@ BEGIN
             ELSE 'in_market'
           END
       ),
-      'top_competitors', v_top_items
+      'top_competitors', v_top_items,
+      'price_history', jsonb_build_object(
+        'subject', v_price_history_subject,
+        'competitors', COALESCE(v_price_history_comp, '[]'::jsonb)
+      )
     );
 
   INSERT INTO users.flat_reports (
